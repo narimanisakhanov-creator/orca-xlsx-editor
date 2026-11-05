@@ -156,6 +156,129 @@
   background: var(--orca-accent, #f0f0f0);
 }
 
+/* "В агента": a wider popup holding a list, a format select, a checkbox, a preview and a button.
+   The preview is six lines tall and scrolls, so a long handoff never pushes the button off-screen. */
+
+.wb-handoff-popup {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 340px;
+  max-width: 440px;
+}
+
+.wb-agent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 168px;
+  overflow-y: auto;
+}
+
+.wb-agent {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.wb-agent:hover:not(:disabled),
+.wb-agent:focus-visible {
+  background: var(--orca-accent, #f0f0f0);
+  outline: none;
+}
+
+.wb-agent.is-selected {
+  background: var(--orca-accent, #f0f0f0);
+  box-shadow: inset 2px 0 0 var(--orca-primary, #171717);
+}
+
+.wb-agent:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.wb-agent-dot {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--orca-muted-foreground, #737373);
+}
+
+.wb-agent-dot[data-state="working"] {
+  background: #16a34a;
+}
+
+.wb-agent-dot[data-state="blocked"] {
+  background: #dc2626;
+}
+
+.wb-agent-dot[data-state="waiting"] {
+  background: #d97706;
+}
+
+.wb-agent-dot[data-state="done"] {
+  background: var(--orca-muted-foreground, #737373);
+}
+
+.wb-agent-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wb-agent-state {
+  color: var(--orca-muted-foreground, #737373);
+  font-size: 11px;
+}
+
+.wb-empty {
+  padding: 6px 8px;
+  color: var(--orca-muted-foreground, #737373);
+  font-size: 11px;
+}
+
+.wb-select {
+  border: 1px solid var(--orca-input, #e5e5e5);
+  border-radius: 4px;
+  background: var(--orca-background, #ffffff);
+  color: inherit;
+  font: inherit;
+  padding: 1px 4px;
+}
+
+.wb-handoff-preview {
+  margin: 0;
+  max-height: calc(6 * 1.5em);
+  overflow: auto;
+  padding: 6px 8px;
+  border: 1px solid var(--orca-border, #e5e5e5);
+  border-radius: 4px;
+  background: var(--orca-muted, #f5f5f5);
+  font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  white-space: pre;
+}
+
+.wb-handoff-preview:empty::before {
+  content: 'Нечего передавать';
+  color: var(--orca-muted-foreground, #737373);
+}
+
+.wb-handoff-send {
+  align-self: flex-end;
+}
+
 .wb-formula {
   display: flex;
   align-items: center;

@@ -1,5 +1,19 @@
 # Changelog
 
+## 1.1.0
+
+Hand the table to an agent.
+
+- New **В агента** control in the toolbar: pick an agent of the focused workspace, choose a Markdown
+  table or TSV, read the exact text that will be sent, and pass it on. Nothing is sent without a
+  press.
+- The plugin now runs a Node worker (`trusted-worker`) with two capabilities: `agent:read` to list
+  the workspace's agents and `terminal:send` to type into one terminal. Orca asks for both when the
+  plugin is enabled, and every send is a single `terminal.sendText` call of at most 4096
+  characters — text over that is cut on a line boundary and the reply says so.
+- The hand-off text is built by the same formatters as the clipboard, so the preview and what leaves
+  the plugin cannot drift apart.
+
 ## 1.0.0
 
 First public release.

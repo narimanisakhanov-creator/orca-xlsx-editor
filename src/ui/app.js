@@ -4,6 +4,7 @@
 import { createGrid } from './grid.js'
 import { commitEdit, undo, redo, editState } from './document.js'
 import { selectionToTsv, selectionToCsv, selectionToMarkdown, copyText } from './clipboard.js'
+import { buildHandoff, truncateText, TEXT_LIMIT } from '../../worker/handoff.js'
 
 const ROWS_AHEAD = 2
 
@@ -103,12 +104,267 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
   formulaToggle.append(formulaBox, el('span', null, 'Формулы как текст'))
   formulaBox.addEventListener('change', () => {
     copyFormulas = formulaBox.checked
+    // A handoff is built from the same text a copy would produce, so the preview has to follow.
+    if (agentMenu?.isOpen()) renderHandoffPreview()
   })
   copyMenu.add(formulaToggle)
 
   const exportMenu = makeMenu({ label: 'Экспорт', ariaLabel: 'Экспортировать лист в файл' })
   exportMenu.add(menuItem('CSV (.csv)', '', () => exportSheet('csv')))
   exportMenu.add(menuItem('Markdown (.md)', '', () => exportSheet('markdown')))
+
+  // "В агента": `terminal.sendText` is a worker-only host method, so the button exists only when
+  // this frame can reach its own worker. Nothing is ever sent on its own — the host requires a user
+  // gesture, and the click on "Передать" is that gesture.
+  const workerBridge = globalThis.orca?.plugin
+  const canHandoff = Boolean(workerBridge && typeof workerBridge.request === 'function')
+
+  const HANDOFF_FORMATS = [['markdown', 'Markdown-таблица'], ['tsv', 'TSV']]
+  const AGENT_STATE_TEXT = { working: 'работает', waiting: 'ожидает', blocked: 'нужен ответ', done: 'готово' }
+  const AGENT_STATES = new Set(Object.keys(AGENT_STATE_TEXT))
+
+  let handoffFormat = 'markdown'
+  let handoffAgents = []
+  let handoffAgentId = null
+  let handoffLoading = false
+  let handoffNote = ''
+  let handoffList = null
+  let handoffEmpty = null
+  let handoffPreview = null
+  let handoffSend = null
+  let handoffEnter = null
+  let handoffFormatSelect = null
+
+  const agentMenu = canHandoff ? makeMenu({ label: 'В агента', ariaLabel: 'Передать таблицу агенту' }) : null
+
+  if (agentMenu) {
+    const popup = agentMenu.wrap.querySelector('.wb-menu-popup')
+    // The popup holds a list, a select, a checkbox and a button: a form, not a menu.
+    popup.classList.add('wb-handoff-popup')
+    popup.setAttribute('role', 'dialog')
+    popup.setAttribute('aria-label', 'Передать таблицу агенту')
+
+    handoffList = el('div', 'wb-agent-list')
+    handoffList.setAttribute('role', 'radiogroup')
+    handoffList.setAttribute('aria-label', 'Агенты этого workspace')
+
+    handoffEmpty = el('div', 'wb-empty', 'Нет активных агентов в этом workspace')
+    handoffEmpty.hidden = true
+
+    const formatRow = el('label', 'wb-menu-check')
+    const formatSelect = el('select', 'wb-select')
+    handoffFormatSelect = formatSelect
+    formatSelect.setAttribute('aria-label', 'Формат таблицы')
+    for (const [value, text] of HANDOFF_FORMATS) {
+      const option = el('option', null, text)
+      option.value = value
+      formatSelect.append(option)
+    }
+    formatSelect.value = handoffFormat
+    formatSelect.addEventListener('change', () => {
+      handoffFormat = HANDOFF_FORMATS.some(([value]) => value === formatSelect.value) ? formatSelect.value : 'markdown'
+      renderHandoffPreview()
+    })
+    formatRow.append(el('span', null, 'Формат'), formatSelect)
+
+    const enterRow = el('label', 'wb-menu-check')
+    handoffEnter = el('input')
+    handoffEnter.type = 'checkbox'
+    handoffEnter.setAttribute('aria-label', 'Отправить сразу (Enter)')
+    enterRow.append(handoffEnter, el('span', null, 'Отправить сразу (Enter)'))
+
+    handoffPreview = el('pre', 'wb-handoff-preview')
+    handoffPreview.setAttribute('aria-label', 'Предпросмотр того, что уйдёт агенту')
+
+    handoffSend = el('button', 'wb-button wb-handoff-send', 'Передать')
+    handoffSend.type = 'button'
+    handoffSend.disabled = true
+    handoffSend.addEventListener('click', () => {
+      void sendHandoff()
+    })
+
+    agentMenu.add(handoffList)
+    agentMenu.add(handoffEmpty)
+    agentMenu.add(formatRow)
+    agentMenu.add(enterRow)
+    agentMenu.add(handoffPreview)
+    agentMenu.add(handoffSend)
+
+    // The agent list is read when the popup opens: an agent may have started, finished or gone
+    // since the last look, and the frame has no subscription to keep it current.
+    agentMenu.button.addEventListener('click', () => {
+      if (!agentMenu.isOpen()) return
+      renderHandoffPreview()
+      void refreshHandoffAgents()
+    })
+  }
+
+  function agentName(agent) {
+    const title = typeof agent?.title === 'string' ? agent.title.trim() : ''
+    if (title) return title
+    const kind = typeof agent?.agent === 'string' ? agent.agent.trim() : ''
+    if (kind) return kind
+    return typeof agent?.terminalId === 'string' && agent.terminalId !== '' ? agent.terminalId : 'Без названия'
+  }
+
+  /** Draws the rows the worker returned: already ranked there, so the order is kept as it came. */
+  function renderHandoffAgents() {
+    if (!handoffList) return
+    handoffList.textContent = ''
+    for (const agent of handoffAgents) {
+      const id = typeof agent?.terminalId === 'string' ? agent.terminalId : ''
+      const row = el('button', 'wb-agent')
+      row.type = 'button'
+      row.setAttribute('role', 'radio')
+      const checked = id !== '' && id === handoffAgentId
+      row.setAttribute('aria-checked', String(checked))
+      if (checked) row.classList.add('is-selected')
+      const dot = el('span', 'wb-agent-dot')
+      dot.dataset.state = AGENT_STATES.has(agent?.state) ? agent.state : 'unknown'
+      row.append(
+        dot,
+        el('span', 'wb-agent-name', agentName(agent)),
+        el('span', 'wb-agent-state', AGENT_STATE_TEXT[agent?.state] ?? '')
+      )
+      if (!id) {
+        // Orca could not tie this agent's pane to a terminal it lists, so there is no address to
+        // type into; offering the row would only produce a refusal on click.
+        row.disabled = true
+        row.title = 'У этого агента нет терминала, которому можно передать текст'
+      } else {
+        row.addEventListener('click', () => {
+          handoffAgentId = id
+          renderHandoffAgents()
+          renderHandoffPreview()
+        })
+      }
+      handoffList.append(row)
+    }
+    if (handoffAgents.length === 0) {
+      handoffEmpty.hidden = false
+      handoffEmpty.textContent = handoffNote || 'Нет активных агентов в этом workspace'
+    } else {
+      handoffEmpty.hidden = true
+    }
+  }
+
+  function pickHandoffAgent() {
+    const usable = handoffAgents.filter((agent) => typeof agent?.terminalId === 'string' && agent.terminalId !== '')
+    if (usable.some((agent) => agent.terminalId === handoffAgentId)) return
+    handoffAgentId = usable[0]?.terminalId ?? null
+  }
+
+  async function refreshHandoffAgents() {
+    if (!agentMenu || handoffLoading) return
+    handoffLoading = true
+    // A list already on screen stays there while it refreshes; only an empty one says why it is.
+    handoffNote = handoffAgents.length === 0 ? 'Ищу агентов…' : ''
+    renderHandoffAgents()
+    try {
+      const result = await workerBridge.request('agent.list')
+      handoffAgents = Array.isArray(result?.agents) ? result.agents : []
+      handoffNote = ''
+    } catch (error) {
+      handoffAgents = []
+      handoffNote = 'Не удалось получить список агентов'
+      flash(describeError(error), true)
+    } finally {
+      handoffLoading = false
+      pickHandoffAgent()
+      renderHandoffAgents()
+      renderHandoffPreview()
+      // Rebuilding the rows drops the node that had focus; without this the popup would be open
+      // with focus on the page body and Escape or Tab would go somewhere else.
+      if (agentMenu.isOpen() && !agentMenu.wrap.contains(window.document.activeElement)) {
+        const target = handoffList.querySelector('.wb-agent:not(:disabled)') ?? handoffFormatSelect ?? handoffSend
+        target?.focus?.()
+      }
+    }
+  }
+
+  /** The box the handoff covers: the selection, or the active cell when nothing is selected. */
+  function handoffBox() {
+    const sel = selectionBox()
+    if (sel) {
+      return {
+        r1: Math.min(sel.r1, sel.r2),
+        c1: Math.min(sel.c1, sel.c2),
+        r2: Math.max(sel.r1, sel.r2),
+        c2: Math.max(sel.c1, sel.c2)
+      }
+    }
+    const parsed = parseRef(active.ref)
+    return parsed ? { r1: parsed.r, c1: parsed.c, r2: parsed.r, c2: parsed.c } : null
+  }
+
+  function handoffRange(box) {
+    const start = formatRef({ r: box.r1, c: box.c1 })
+    const end = formatRef({ r: box.r2, c: box.c2 })
+    return start === end ? start : `${start}:${end}`
+  }
+
+  /**
+   * What the agent will receive, already cut to the host's limit, so the preview and the sent text
+   * are one string. The table comes from the same formatters a copy uses; the frame has no file
+   * path — it is handed bytes — so the context line names the sheet and the range only.
+   */
+  function handoffText() {
+    const sheet = model.sheets[active.sheet]
+    const box = handoffBox()
+    if (!sheet || !box) return ''
+    const cells = handoffFormat === 'tsv'
+      ? selectionToTsv(sheet, box, { formulas: copyFormulas })
+      : selectionToMarkdown(sheet, box, { formulas: copyFormulas })
+    const text = buildHandoff({
+      sheetName: sheet.name,
+      range: handoffRange(box),
+      format: handoffFormat,
+      cells
+    })
+    return truncateText(text, TEXT_LIMIT).text
+  }
+
+  function renderHandoffPreview() {
+    if (!handoffPreview) return
+    const text = handoffText()
+    handoffPreview.textContent = text
+    handoffSend.disabled = text === '' || handoffAgentId === null
+  }
+
+  async function sendHandoff() {
+    if (!agentMenu) return
+    const agent = handoffAgents.find((entry) => entry?.terminalId === handoffAgentId) ?? null
+    const text = handoffText()
+    if (!agent) {
+      flash('Выберите агента', true)
+      return
+    }
+    if (text === '') {
+      flash('Нечего передавать', true)
+      return
+    }
+    handoffSend.disabled = true
+    try {
+      const result = await workerBridge.request('agent.send', {
+        terminalId: agent.terminalId,
+        text,
+        enter: handoffEnter.checked === true
+      })
+      if (result?.accepted === true) {
+        flash(`Передано в ${agentName(agent)}`)
+        agentMenu.close()
+        grid.focus?.()
+      } else {
+        flash(result?.reason || 'Агент не принял текст', true)
+      }
+    } catch (error) {
+      flash(describeError(error), true)
+    } finally {
+      // The popup stays open on a failure so the person can fix the target and try again.
+      renderHandoffAgents()
+      renderHandoffPreview()
+    }
+  }
 
   const onOutsidePointer = (event) => {
     for (const menu of menus) {
@@ -127,7 +383,17 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
   window.document.addEventListener('pointerdown', onOutsidePointer)
   window.document.addEventListener('keydown', onMenuEscape)
 
-  toolbar.append(tabs, spacer, copyMenu.wrap, exportMenu.wrap, undoButton, redoButton, stateLabel)
+  toolbar.append(
+    tabs,
+    spacer,
+    copyMenu.wrap,
+    exportMenu.wrap,
+    // The third button keeps its place in the row and simply does not exist without a worker bridge.
+    ...(agentMenu ? [agentMenu.wrap] : []),
+    undoButton,
+    redoButton,
+    stateLabel
+  )
 
   const formulaBar = el('div', 'wb-formula')
   const address = el('div', 'wb-address', 'A1')
@@ -333,6 +599,7 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
     active = { sheet: sheetIndex, ref }
     renderFormula()
     renderStatus()
+    if (agentMenu?.isOpen()) renderHandoffPreview()
   }
 
   function selectSheet(index) {
@@ -624,6 +891,11 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
       renderStatus()
     }
   }
+}
+
+/** A host or bridge failure as the one sentence a flash can show. */
+function describeError(error) {
+  return error instanceof Error && error.message ? error.message : String(error)
 }
 
 // A1 addressing, duplicated from the edit layer on purpose: the UI must not depend on its internals.

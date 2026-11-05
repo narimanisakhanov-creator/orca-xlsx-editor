@@ -1,113 +1,108 @@
-# XLSX Editor
+<div align="center">
 
-An Orca custom editor for Excel workbooks that draws the formatting the file actually carries —
-fills, fonts, borders, alignment, number formats, merged cells, frozen panes and every sheet — and
-saves by rewriting only the cells that changed.
+[English version](README.en.md)
 
-Orca hands a custom editor the workbook's bytes and keeps the file's path to itself. The editor
-parses those bytes, shows them, and posts back new bytes; Orca owns the buffer, the dirty state and
-the save.
+<img src="./banner.png" alt="XLSX Editor — редактор книг Excel в Orca с сохранением нетронутых байтов" width="100%">
 
-## Why the save is byte-preserving
+<p>
+  <a href="https://github.com/narimanisakhanov-creator/orca-xlsx-editor/releases/latest"><img src="https://img.shields.io/github/v/release/narimanisakhanov-creator/orca-xlsx-editor?label=release&color=5f7f95" alt="Последний релиз"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-6b7280" alt="Лицензия MIT"></a>
+  <img src="https://img.shields.io/badge/Orca-%E2%89%A51.4.248-58758a" alt="Orca 1.4.248 или новее">
+  <img src="https://img.shields.io/badge/tests-168%20passing-6f8796" alt="168 тестов проходят">
+  <img src="https://img.shields.io/badge/formats-xlsx%20%2F%20xlsm-4f7c8a" alt="Форматы xlsx и xlsm">
+</p>
 
-A spreadsheet is a zip of XML parts: styles, shared strings, drawings, charts, macros, pivot
-caches. Re-serialising the whole workbook would rewrite all of them, and anything the writer does
-not model — `vbaProject.bin`, a chart, a comment — would be lost or invalidated.
+<p><b>Редактор книг Excel в Orca: форматирование из файла, точечное редактирование и сохранение нетронутых частей ZIP.</b></p>
 
-So the writer never re-serialises. It edits the `<c>` elements of the edited sheets in the
-original XML text, leaves `sharedStrings.xml` alone by writing new text inline, and copies every
-other zip entry's **compressed bytes** verbatim. On `test/fixtures/styled.xlsx` — nine parts in
-the archive — one cell edit rewrites one of them, `xl/worksheets/sheet1.xml`, and the other eight
-stay identical byte for byte.
+<p>
+  <a href="#установка">Установка</a> ·
+  <a href="#возможности">Возможности</a> ·
+  <a href="#передать-агенту">Передать агенту</a> ·
+  <a href="#как-сохраняет">Как сохраняет</a> ·
+  <a href="#ограничения">Ограничения</a> ·
+  <a href="#разработка">Разработка</a> ·
+  <a href="#изменения">Изменения</a>
+</p>
 
-Recalculation bookkeeping is the exception, and it is conditional:
+</div>
 
-- when the package carries `xl/calcChain.xml`, the save deletes it and rewrites
-  `xl/_rels/workbook.xml.rels` and `[Content_Types].xml` to drop the relationship and the
-  content-type override that pointed at it;
-- when `<calcPr>` does not already say `fullCalcOnLoad="1"`, the save rewrites `xl/workbook.xml`
-  to add it.
+---
 
-So the case `test/writer.spec.mjs` asserts — a calc chain plus a `<calcPr>` without
-`fullCalcOnLoad` — comes back with four changed parts plus one removal; a workbook with neither
-comes back with two changed parts, the sheet and `xl/workbook.xml`.
+![Таблица с заливками, границами, форматами чисел и закреплённой строкой](docs/images/styled-workbook.png)
 
-## Layout
+<p align="center"><sub>Реальный снимок Orca, полученный на синтетической книге <code>test/fixtures/styled.xlsx</code>; происхождение описано в <a href="docs/screenshots.md">docs/screenshots.md</a>.</sub></p>
 
-| Path | What it holds |
-| --- | --- |
-| `orca-plugin.json` | manifest: `sandboxed-ui`, `contentKind: "bytes"`, `frame: "isolated"` |
-| `editor/index.html` | the frame page; the build fills its `vendor-script`, `app-script` and `app-styles` blocks |
-| `editor/boot.js` | the classic-script watchdog that reports missing assets instead of spinning on the loader |
-| `editor/page.css` | the base shell and theme fallbacks, hand-written and linked by `index.html` |
-| `editor/assets/exceljs-4.4.0.min.js` | vendored reader, the `setImmediate` polyfill replaced and five lodash global probes patched |
-| `editor/assets/app-<hash>.js`, `.css` | this plugin, bundled |
-| `src/main.js` | boot: session, model, chrome |
-| `src/ui/document.js` | the only file that opens an Orca document session: decode, encode, save marks |
-| `src/ui/app.js` | sheet tabs, formula bar, status bar, undo and redo, the copy and export menus |
-| `src/ui/grid.js` | virtualised grid: styles, merges, frozen panes, selection, navigation |
-| `src/ui/clipboard.js` | TSV, CSV and Markdown formatters; `copyText` is its only DOM call |
-| `src/model/workbook.js` | ExcelJS to a view model, existing cells only |
-| `src/model/style.js`, `numfmt.js` | styles to CSS, number formats to displayed text |
-| `src/write/xml.js`, `xlsx-writer.js` | text-level XML surgery, cell edits, recalculation bookkeeping |
-| `src/write/zip.js`, `zip-budget.js` | zip reading and rewriting that keeps untouched entries' bytes |
-| `src/edit/edits.js` | the operation log, coalescing, undo and redo, save marks |
-| `scripts/make-fixtures.py` | the fixture generator described below |
-| `docs/CONTRACT.md` | the interface between those layers |
+## Установка
 
-## Build and test
+**Из Git.** Откройте ссылку в Orca:
+
+<a href="orca://plugins/narimanisakhanov-creator.xlsx-editor?catalog=https://github.com/narimanisakhanov-creator/orca-xlsx-editor.git">Установить из Git</a>
+
+**Режим разработки.** Из корня клонированного репозитория выполните:
 
 ```sh
-npm ci --ignore-scripts
-npm run build        # editor/assets/* and the three build-owned blocks in index.html; fails on eval, on a missing asset, on a file over 1 MiB
-npm run check:dist   # the same checks against what is on disk, without bundling or writing
-npm test             # node --test over both patterns: 127 tests
-orca plugin test .   # what Orca runs: 12 tests, from test/edits.test.mjs
+orca plugin dev load .
 ```
 
-`editor/assets/` is committed on purpose: the built bundle, its stylesheet and the vendored ExcelJS
-are what an installed plugin loads, so the folder opens nothing without them. `check:dist` is what
-catches that drift before a commit.
+Требуется Orca `>=1.4.248`. Node.js `>=20.6` нужен для сборки и тестов.
 
-Two runners, on purpose. `orca plugin test` selects files by name — its help lists `*.test.ts(x)`
-and also `.mts`, `.js`, `.jsx`, `.mjs` — so a suite in `*.spec.mjs` is simply invisible to it:
-`test/edits.test.mjs` is the only file that matches, and it is dependency-free. Everything that
-needs `exceljs` or `fflate` sits in `*.spec.mjs` and runs under plain `node --test`, which globs
-both patterns.
+## Возможности
 
-`scripts/make-fixtures.py` builds the fixtures with openpyxl, an implementation independent of the
-reader, so the tests never check ExcelJS against itself. It writes three files into
-`test/fixtures/`: `rich.xlsx` (three sheets, styles, number formats, merged cells, a conditional
-format, a frozen pane, a defined name), `macro.xlsm` (the same book plus a fake
-`xl/vbaProject.bin`, so the save can be proved to leave the macro part byte for byte) and
-`styled.xlsx` (166 rows by 16 columns, a painted header, banded rows, borders everywhere, mixed
-number formats). `styled.xlsx` is generated precisely because it stands in for a real customer
-workbook, which must not be committed to a public repository.
+- Открывает `.xlsx` и `.xlsm`, включая все листы книги.
+- Рисует заливки, шрифты, границы, выравнивание, числовые форматы, объединённые ячейки, закреплённые области, ширины столбцов и высоты строк.
+- Редактирует значения ячеек и их типы, поддерживает формулы, очистку, вставку блока, отмену и повтор.
+- Копирует выделение как TSV, CSV или Markdown и экспортирует лист целиком.
+- Передаёт таблицу агенту в терминал Orca — кнопкой, с предпросмотром того, что уйдёт.
+- При сохранении оставляет нетронутыми макросы, рисунки, графики и сводные кэши; объекты, которые редактор не рисует, всё равно сохраняются.
+- Работает локально и не обращается к сети.
 
-## Run it in Orca
+## Передать агенту
+
+Кнопка **В агента** в панели редактора собирает выделение (или лист) в Markdown-таблицу или TSV и
+вставляет её в терминал выбранного агента текущего workspace. Отправка — только по нажатию;
+по умолчанию текст вставляется **без** Enter, чтобы его можно было прочитать и дополнить, а
+галочка «Отправить сразу» добавляет Enter.
+
+Перед отправкой видно ровно тот текст, который уйдёт: предпросмотр строит та же функция, что и
+отправку. Предел одного сообщения — 4096 символов (ограничение Orca на `terminal.sendText`),
+длинный текст обрезается по границе строки, и ответ говорит об этом.
+
+Для этого плагин работает в профиле `trusted-worker` и просит два разрешения при включении:
+`agent:read` — увидеть агентов workspace, `terminal:send` — ввести текст в один терминал. Ничего
+другого плагин не читает и не запускает.
+
+## Как сохраняет
+
+Книга Excel — это ZIP с XML-частями; редактор меняет только элементы `<c>` в XML изменённых листов. Нетронутые записи ZIP копируются с исходными сжатыми байтами, а текстовые значения пишутся inline, поэтому `sharedStrings.xml` не переписывается. Макросы и остальные не затронутые части остаются байт-в-байт прежними. Если ячейка действительно изменилась и в книге есть `calcChain.xml`, цепочка удаляется, связи обновляются, а `fullCalcOnLoad="1"` просит Excel пересчитать книгу; сохранение без изменения ячеек не трогает эту служебную часть.
+
+## Ограничения
+
+- Графики, сводные таблицы, спарклайны и другие drawing-объекты не рисуются; при сохранении они остаются в книге.
+- Формулы не вычисляются: показывается сохранённый результат или текст формулы, а изменённая формула отдаётся Excel на пересчёт при открытии.
+- Вставка и удаление строк или столбцов не поддерживаются.
+- Поддерживаются только `.xlsx` и `.xlsm`; `.xls`, `.xlsb` и `.ods` не поддерживаются.
+- На реальной машине 6 книг из 478 не открываются: ExcelJS падает на part с непрефиксным `<wsDr>`, на table part и на префиксных пространствах имён.
+- Сетевого доступа нет: редактор не загружает внешние ресурсы.
+- Передача агенту работает только в desktop-приложении: в браузерном клиенте кадр не имеет доступа
+  к воркеру.
+
+## Разработка
 
 ```sh
-orca plugin dev load . --json                        # prints the approval fingerprint; exits 3 while approval is owed
-orca plugin dev load . --json --approve <fingerprint>  # same folder, approved: exits 0
-orca plugin open local.xlsx-editor --editor ./book.xlsx
-orca plugin shot local.xlsx-editor --editor ./book.xlsx --out ./shot.png --json
+npm ci
+npm run build
+npm test
+npm run check:dist
+orca plugin validate .
+orca plugin check .
+orca plugin test .
 ```
 
-`plugin dev load` keeps the folder in Settings → Plugins → Development folders and reloads it when
-its files change. Exit code 3 is `approval_required` (or a fingerprint that the files, version or
-access changed out from under, `approval_stale`); once the fingerprint is approved the same command
-exits 0. `plugin shot` renders the editor exactly as Orca draws it and writes a PNG.
+`npm test` в текущем снимке репозитория: 168 тестов проходят. `npm run build` собирает содержимое `editor/assets/` и проверяет итоговый дистрибутив; `check:dist` повторяет проверки без записи. Команды `orca plugin validate`, `check` и `test` проверяют манифест, упаковку и тесты средствами Orca.
 
-## What it does not do
+## Изменения
 
-- No charts, pivot tables, sparklines or drawing objects: they survive the save untouched, but are
-  not drawn.
-- No formula evaluation. A formula shows its cached result, the formula text when the file carries
-  none; an edited formula is written without a result and Excel recalculates on open.
-- No insert or delete of rows and columns yet: that shifts every reference in the file (formulas,
-  merges, validations, conditional formats, defined names) and is a feature of its own.
-- No `.xls`, `.xlsb` or `.ods`: only the Office Open XML formats this writer can patch.
-- Six workbooks out of 478 sampled from a real machine still fail to open: ExcelJS gives up on a
-  drawing part with an unprefixed `<wsDr>` root (4 files), one table part (1) and one spread with
-  prefixed namespaces throughout (1). Everything else in that corpus opens.
-- No network: the frame refuses every request outside the plugin.
+- [Журнал изменений](CHANGELOG.md)
+- [Лицензия MIT](LICENSE)
+- [Уведомления о стороннем коде](THIRD_PARTY_NOTICES.md)
+- [English version](README.en.md)

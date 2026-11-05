@@ -3,8 +3,8 @@
   "manifestVersion": 2,
   "id": "xlsx-editor",
   "name": "XLSX Editor",
-  "version": "1.0.0",
-  "description": "Open and edit Excel workbooks in Orca with their formatting: fills, fonts, borders, number formats, merged cells, frozen panes and every sheet. Saves in place without touching the parts it did not edit.",
+  "version": "1.1.0",
+  "description": "Open and edit Excel workbooks in Orca with their formatting: fills, fonts, borders, number formats, merged cells, frozen panes and every sheet. Saves in place without touching the parts it did not edit. Hands a selection or a sheet to an agent in your workspace as a Markdown table or TSV.",
   "author": {
     "name": "Nariman Isakhanov",
     "url": "https://github.com/narimanisakhanov-creator"
@@ -16,7 +16,8 @@
   "engines": {
     "orca": ">=1.4.248"
   },
-  "execution": "sandboxed-ui",
+  "execution": "trusted-worker",
+  "main": "worker/main.js",
   "pluginApi": 1,
   "contributes": {
     "customEditors": [
@@ -35,7 +36,14 @@
       }
     ]
   },
-  "capabilities": [],
+  "capabilities": [
+    {
+      "kind": "agent:read"
+    },
+    {
+      "kind": "terminal:send"
+    }
+  ],
   "cover": {
     "path": "images/cover.png",
     "alt": "A ledger workbook in the editor: painted header, banded rows with borders, currency and percentage columns, frozen panes, and the copy and export controls"

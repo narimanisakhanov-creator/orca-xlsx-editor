@@ -231,7 +231,24 @@ vanish from the log: it appends the inverse operation, because the edit it rever
 in the file. `redo` likewise re-appends with a fresh seq. Without this, a save followed by an undo
 produced an empty delta and left the file changed.
 
-## 8. `src/ui/clipboard.js` — clipboard and export text
+## 8. The worker and the hand-off
+
+`worker/main.js` is the plugin's Node process (`trusted-worker`, `main` in the manifest). It is the
+only place that may call `agents.list` and `terminal.sendText`, because both need capabilities a
+frame cannot hold:
+
+```js
+export default function activate(orca)         // required; a named export is never called
+orca.panels.handle('agent.list', handler)      // -> { agents: Agent[] }, already ranked
+orca.panels.handle('agent.send', handler)      // { terminalId, text, enter? } -> { accepted, sent, truncated, reason? }
+```
+
+`worker/handoff.js` holds the pure part — `buildHandoff`, `truncateText` (the host refuses a
+`terminal.sendText` over 4096 characters), `rankAgents`, `readSend` — so the frame can build the
+same text it will send and both sides can be tested without Orca. The frame calls the handlers with
+`orca.plugin.request`; nothing is sent without a press.
+
+## 9. `src/ui/clipboard.js` — clipboard and export text
 
 ```js
 export function selectionToTsv(sheet, selection, { formulas = false })       // -> string
