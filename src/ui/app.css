@@ -164,7 +164,11 @@
   flex-direction: column;
   gap: 4px;
   min-width: 340px;
-  max-width: 440px;
+  max-width: min(440px, 70vw);
+  /* The button sits near the right edge of the toolbar, so the popup opens leftwards; anchored to
+     the left it would be clipped by the frame. */
+  left: auto;
+  right: 0;
 }
 
 .wb-agent-list {
