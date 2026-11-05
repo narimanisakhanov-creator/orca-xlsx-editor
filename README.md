@@ -100,6 +100,8 @@ orca plugin test .
 
 `npm test` в текущем снимке репозитория: 168 тестов проходят. `npm run build` собирает содержимое `editor/assets/` и проверяет итоговый дистрибутив; `check:dist` повторяет проверки без записи. Команды `orca plugin validate`, `check` и `test` проверяют манифест, упаковку и тесты средствами Orca.
 
+Каталог `orca-catalog.json` пересобирается командой `node scripts/write-catalog.mjs` после сборки и перед релизным коммитом.
+
 ## Изменения
 
 - [Журнал изменений](CHANGELOG.md)

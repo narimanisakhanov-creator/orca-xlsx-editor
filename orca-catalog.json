@@ -1,0 +1,71 @@
+{
+  "$schema": "https://raw.githubusercontent.com/stablyai/orca/main/docs/schemas/plugins/orca-catalog.v2.schema.json",
+  "catalogVersion": 2,
+  "name": "XLSX Editor",
+  "owner": "narimanisakhanov-creator",
+  "plugins": [
+    {
+      "id": "narimanisakhanov-creator.xlsx-editor",
+      "source": {
+        "kind": "git",
+        "url": "https://github.com/narimanisakhanov-creator/orca-xlsx-editor",
+        "ref": "main"
+      },
+      "description": "Open and edit Excel workbooks in Orca with their formatting: fills, fonts, borders, number formats, merged cells, frozen panes and every sheet. Saves in place without touching the parts it did not edit. Hands a selection or a sheet to an agent in your workspace as a Markdown table or TSV.",
+      "categories": [
+        "editors"
+      ],
+      "releases": [
+        {
+          "version": "1.1.0",
+          "commit": "02dd98a87e076f5f152a4164dbb6bed991b100af",
+          "contentHash": "65cf9b1f737c1f6fcbae15906fce072585321567b698217f2a1887aac9a2a0b4",
+          "execution": "trusted-worker",
+          "minimumOrca": "1.4.248",
+          "name": "XLSX Editor",
+          "license": "MIT",
+          "contributes": [
+            {
+              "kind": "customEditors",
+              "name": "Workbook",
+              "detail": ".xlsx, .xlsm"
+            }
+          ],
+          "fileTypes": [
+            "xlsx",
+            "xlsm"
+          ],
+          "editorFileTypes": [
+            "xlsx",
+            "xlsm"
+          ],
+          "images": {
+            "icon": {
+              "path": "images/icon.png",
+              "alt": "XLSX Editor",
+              "sha256": "65f7d1fc78051e249ec8ee923c63906a317d9f10f7446af0d5c6aff7998064cb",
+              "width": 256,
+              "height": 256
+            },
+            "cover": {
+              "path": "images/cover.png",
+              "alt": "A ledger workbook in the editor: painted header, banded rows with borders, currency and percentage columns, frozen panes, and the copy and export controls",
+              "sha256": "098f5ed064da8e279a7a73327549e3e35806f87a9eecdefb67aeb29236feed5a",
+              "width": 1600,
+              "height": 1000
+            },
+            "screenshots": [
+              {
+                "path": "images/screenshot.png",
+                "alt": "A ledger with a painted header, alternating row fills, thin borders and formatted numbers",
+                "sha256": "4cbc74c2e754e655fef173a797e0258cc7a6c3bd7f67914b95cc1f06163f4453",
+                "width": 1369,
+                "height": 867
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

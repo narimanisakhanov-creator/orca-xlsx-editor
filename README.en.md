@@ -99,6 +99,8 @@ orca plugin test .
 
 In the current repository snapshot, `npm test` reports 168 passing tests. `npm run build` creates `editor/assets/` and checks the resulting distribution; `check:dist` repeats those checks without writing. `orca plugin validate`, `check` and `test` run Orca's manifest, package and test checks.
 
+The `orca-catalog.json` catalog is regenerated with `node scripts/write-catalog.mjs` after a build and before the release commit.
+
 ## Changes
 
 - [Changelog](CHANGELOG.md)
