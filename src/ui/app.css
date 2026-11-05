@@ -1,0 +1,242 @@
+/* Editor chrome. Colours come from Orca's theme variables so the tab follows light and dark
+   without a reload; every fallback is the neutral value Orca itself uses. */
+
+.wb {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--orca-background, #ffffff);
+  color: var(--orca-foreground, #0a0a0a);
+  font: 12px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.wb-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--orca-border, #e5e5e5);
+  background: var(--orca-card, #ffffff);
+  flex: 0 0 auto;
+  min-height: 32px;
+}
+
+.wb-tabs {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.wb-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.wb-tab {
+  border: 0;
+  background: transparent;
+  color: var(--orca-muted-foreground, #737373);
+  font: inherit;
+  padding: 4px 10px;
+  border-radius: var(--orca-radius, 6px) var(--orca-radius, 6px) 0 0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.wb-tab:hover {
+  background: var(--orca-accent, #f5f5f5);
+  color: var(--orca-accent-foreground, #171717);
+}
+
+.wb-tab.is-active {
+  background: var(--orca-accent, #f5f5f5);
+  color: var(--orca-foreground, #0a0a0a);
+  font-weight: 600;
+  box-shadow: inset 0 -2px 0 var(--orca-primary, #171717);
+}
+
+.wb-toolbar-spacer {
+  flex: 1 1 auto;
+}
+
+.wb-button {
+  border: 1px solid var(--orca-input, #e5e5e5);
+  background: var(--orca-secondary, #f5f5f5);
+  color: var(--orca-secondary-foreground, #171717);
+  border-radius: var(--orca-radius, 6px);
+  font: inherit;
+  padding: 3px 10px;
+  cursor: pointer;
+}
+
+.wb-button:hover:not(:disabled) {
+  background: var(--orca-accent, #f0f0f0);
+}
+
+.wb-button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.wb-state {
+  color: var(--orca-muted-foreground, #737373);
+  font-size: 11px;
+  min-width: 0;
+}
+
+/* Dropdown in the toolbar: the wrapper is the positioning context and the popup floats over
+   the grid, so it needs no layout space of its own. */
+
+.wb-menu {
+  position: relative;
+  flex: 0 0 auto;
+}
+
+.wb-menu-button[aria-expanded="true"] {
+  background: var(--orca-accent, #f0f0f0);
+}
+
+.wb-menu-popup {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 20;
+  min-width: 190px;
+  padding: 4px;
+  border: 1px solid var(--orca-border, #e5e5e5);
+  border-radius: var(--orca-radius, 6px);
+  background: var(--orca-popover, var(--orca-card, #ffffff));
+  color: var(--orca-popover-foreground, var(--orca-foreground, #0a0a0a));
+  box-shadow: 0 6px 20px rgb(0 0 0 / 12%);
+}
+
+.wb-menu-popup[hidden] {
+  display: none;
+}
+
+.wb-menu-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.wb-menu-item:hover,
+.wb-menu-item:focus-visible {
+  background: var(--orca-accent, #f0f0f0);
+  outline: none;
+}
+
+.wb-menu-shortcut {
+  color: var(--orca-muted-foreground, #737373);
+  font-size: 11px;
+}
+
+.wb-menu-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.wb-menu-check:hover {
+  background: var(--orca-accent, #f0f0f0);
+}
+
+.wb-formula {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--orca-border, #e5e5e5);
+  background: var(--orca-card, #ffffff);
+  flex: 0 0 auto;
+}
+
+.wb-address {
+  min-width: 68px;
+  font-variant-numeric: tabular-nums;
+  color: var(--orca-muted-foreground, #737373);
+  text-align: center;
+  border: 1px solid var(--orca-input, #e5e5e5);
+  border-radius: var(--orca-radius, 6px);
+  padding: 2px 6px;
+  background: var(--orca-background, #ffffff);
+}
+
+.wb-formula-kind {
+  color: var(--orca-muted-foreground, #737373);
+  font-style: italic;
+  min-width: 16px;
+}
+
+.wb-formula-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  border: 1px solid var(--orca-input, #e5e5e5);
+  border-radius: var(--orca-radius, 6px);
+  background: var(--orca-background, #ffffff);
+  color: var(--orca-foreground, #0a0a0a);
+  font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  padding: 3px 8px;
+  outline: none;
+}
+
+.wb-formula-input:focus {
+  border-color: var(--orca-ring, #a3a3a3);
+}
+
+.wb-grid {
+  flex: 1 1 auto;
+  min-height: 0;
+  position: relative;
+  overflow: hidden;
+}
+
+.wb-status {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 2px 10px;
+  border-top: 1px solid var(--orca-border, #e5e5e5);
+  background: var(--orca-card, #ffffff);
+  color: var(--orca-muted-foreground, #737373);
+  font-size: 11px;
+  flex: 0 0 auto;
+  min-height: 24px;
+}
+
+.wb-status-item {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.wb-status-right {
+  margin-left: auto;
+}
+
+.wb-state.is-error {
+  color: var(--orca-destructive, #dc2626);
+  font-weight: 600;
+}
+
+.wb-notice {
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--orca-border, #e5e5e5);
+  background: var(--orca-muted, #f5f5f5);
+  color: var(--orca-muted-foreground, #525252);
+  font-size: 11px;
+}

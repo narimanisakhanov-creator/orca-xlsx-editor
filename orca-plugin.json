@@ -1,0 +1,50 @@
+{
+  "$schema": "https://raw.githubusercontent.com/stablyai/orca/main/docs/schemas/plugins/orca-plugin.v2.schema.json",
+  "manifestVersion": 2,
+  "id": "xlsx-editor",
+  "name": "XLSX Editor",
+  "version": "1.0.0",
+  "description": "Open and edit Excel workbooks in Orca with their formatting: fills, fonts, borders, number formats, merged cells, frozen panes and every sheet. Saves in place without touching the parts it did not edit.",
+  "author": {
+    "name": "Nariman Isakhanov",
+    "url": "https://github.com/narimanisakhanov-creator"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/narimanisakhanov-creator/orca-xlsx-editor",
+  "homepage": "https://github.com/narimanisakhanov-creator/orca-xlsx-editor",
+  "icon": "images/icon.png",
+  "engines": {
+    "orca": ">=1.4.248"
+  },
+  "execution": "sandboxed-ui",
+  "pluginApi": 1,
+  "contributes": {
+    "customEditors": [
+      {
+        "id": "xlsx",
+        "title": "Workbook",
+        "icon": "images/tab-icon.png",
+        "extensions": [
+          ".xlsx",
+          ".xlsm"
+        ],
+        "entry": "editor/index.html",
+        "priority": "default",
+        "contentKind": "bytes",
+        "frame": "isolated"
+      }
+    ]
+  },
+  "capabilities": [],
+  "cover": {
+    "path": "images/cover.png",
+    "alt": "A ledger workbook in the editor: painted header, banded rows with borders, currency and percentage columns, frozen panes, and the copy and export controls"
+  },
+  "screenshots": [
+    {
+      "path": "images/screenshot.png",
+      "alt": "A ledger with a painted header, alternating row fills, thin borders and formatted numbers",
+      "caption": "Formatting, number formats and frozen panes come from the file"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "name": "orca-xlsx-editor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Orca custom editor for Excel workbooks: formatting-faithful view, surgical in-place saving.",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20.6"
+  },
+  "scripts": {
+    "build": "node build/build.mjs",
+    "check:dist": "node build/build.mjs --check-only",
+    "test": "node --test test/*.test.mjs test/*.spec.mjs"
+  },
+  "dependencies": {
+    "exceljs": "4.4.0",
+    "fflate": "0.8.3"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.2"
+  }
+}

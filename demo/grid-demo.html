@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Orca grid demo</title>
+  <link rel="stylesheet" href="./dist/demo.css">
+  <style>
+    :root {
+      --orca-background: #ffffff;
+      --orca-card: #ffffff;
+      --orca-foreground: #1f2937;
+      --orca-muted: #eef1f5;
+      --orca-muted-foreground: #596273;
+      --orca-border: #d6dbe3;
+      --orca-accent: #dbeafe;
+      --orca-primary: #2563eb;
+      --orca-ring: #60a5fa;
+      --orca-danger: #b91c1c;
+      --orca-font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    :root[data-theme="dark"] {
+      --orca-background: #14171c;
+      --orca-card: #1b2027;
+      --orca-foreground: #e7ebf0;
+      --orca-muted: #252c35;
+      --orca-muted-foreground: #a5afbd;
+      --orca-border: #38414d;
+      --orca-accent: #24446f;
+      --orca-primary: #77a7ff;
+      --orca-ring: #77a7ff;
+      --orca-danger: #ff8a8a;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { height: 100%; margin: 0; }
+    body {
+      background: var(--orca-background);
+      color: var(--orca-foreground);
+      font-family: var(--orca-font-family);
+    }
+    .demo-shell { height: 100%; display: flex; flex-direction: column; padding: 18px; gap: 12px; }
+    .demo-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+    .demo-heading h1 { margin: 0; font-size: 20px; letter-spacing: -0.02em; }
+    .demo-heading p { margin: 0; color: var(--orca-muted-foreground); font-size: 12px; }
+    .demo-frame { min-height: 0; flex: 1; border: 1px solid var(--orca-border); background: var(--orca-card); box-shadow: 0 10px 30px color-mix(in srgb, var(--orca-foreground) 10%, transparent); }
+    .demo-status { min-height: 20px; color: var(--orca-muted-foreground); font-size: 12px; }
+    .demo-controls { display: flex; align-items: center; gap: 16px; font-size: 12px; }
+    .demo-controls label { display: flex; align-items: center; gap: 6px; }
+    .demo-controls select { border: 1px solid var(--orca-border); border-radius: 3px; padding: 4px 8px; background: var(--orca-card); color: var(--orca-foreground); font: inherit; }
+    .demo-controls select:focus-visible { outline: 2px solid var(--orca-primary); outline-offset: 2px; }
+    @media (max-width: 640px) { .demo-shell { padding: 8px; gap: 8px; } .demo-heading { flex-direction: column; gap: 4px; } .demo-heading p { line-height: 1.5; } }
+  </style>
+</head>
+<body>
+  <main class="demo-shell">
+    <header class="demo-heading">
+      <h1>Workbook grid</h1>
+      <p>Virtualized worksheet · 500 rows · freeze 1 × 1</p>
+    </header>
+    <nav class="demo-controls" aria-label="Workbook settings">
+      <label>Sheet <select id="sheets" aria-label="Sheet"></select></label>
+      <label>Theme <select id="theme" aria-label="Theme"><option value="light">Light</option><option value="dark">Dark</option></select></label>
+    </nav>
+    <section id="grid" class="demo-frame" aria-label="Workbook grid"></section>
+    <div id="status" class="demo-status" role="status" aria-live="polite">A1 · Overview</div>
+  </main>
+  <script src="./dist/demo.js"></script>
+</body>
+</html>

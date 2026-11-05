@@ -1,0 +1,211 @@
+.orca-grid {
+  --grid-paper: #ffffff;
+  --grid-ink: #111111;
+  --grid-header-height: 26px;
+  --grid-row-header-width: 48px;
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--orca-background, #ffffff);
+  color: var(--orca-foreground, #1f2937);
+  font-family: var(--orca-font-family, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
+  font-size: 12px;
+  line-height: 1.25;
+  user-select: none;
+}
+
+.orca-grid-viewport {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  outline: none;
+  overscroll-behavior: contain;
+  scrollbar-color: var(--orca-muted, #a1a1aa) var(--orca-background, #ffffff);
+}
+
+.orca-grid-viewport:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--orca-ring, var(--orca-primary, #2563eb));
+}
+
+.orca-grid-canvas {
+  position: relative;
+  min-width: 100%;
+  min-height: 100%;
+  /* A workbook is paper: its fills are absolute colours, so the sheet stays light whatever the
+     app theme is, the way Excel keeps a white sheet in dark mode. */
+  background: var(--grid-paper, #ffffff);
+}
+
+.orca-grid-body,
+.orca-grid-freeze-top,
+.orca-grid-freeze-left,
+.orca-grid-freeze-corner,
+.orca-grid-col-scroll,
+.orca-grid-col-frozen,
+.orca-grid-row-scroll,
+.orca-grid-row-frozen,
+.orca-grid-corner {
+  position: absolute;
+  box-sizing: border-box;
+  pointer-events: none;
+  will-change: transform;
+  /* A merged cell that straddles a frozen boundary must not paint over the other layer. */
+  overflow: hidden;
+}
+
+.orca-grid-cell,
+.orca-grid-header {
+  position: absolute;
+  box-sizing: border-box;
+  overflow: hidden;
+  border-right: 1px solid var(--orca-border, #d7dbe2);
+  border-bottom: 1px solid var(--orca-border, #d7dbe2);
+}
+
+.orca-grid-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  padding: 3px 6px;
+  background: var(--grid-paper, #ffffff);
+  color: var(--grid-ink, #111111);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  text-align: left;
+}
+
+.orca-grid-cell-content {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: inherit;
+}
+
+.orca-grid-cell-content.is-superscript,
+.orca-grid-cell-content.is-subscript {
+  font-size: 75%;
+  position: relative;
+}
+
+.orca-grid-cell-content.is-superscript { top: -0.3em; }
+.orca-grid-cell-content.is-subscript { top: 0.3em; }
+
+.orca-grid-cell.is-selected {
+  background-image: linear-gradient(color-mix(in srgb, var(--orca-accent, #93c5fd) 36%, transparent), color-mix(in srgb, var(--orca-accent, #93c5fd) 36%, transparent));
+  box-shadow: inset 0 0 0 1px var(--orca-accent, #93c5fd);
+}
+
+.orca-grid-cell.is-active {
+  z-index: 2;
+  outline: 2px solid var(--orca-primary, #2563eb);
+  outline-offset: -2px;
+}
+
+.orca-grid-cell.is-error {
+  color: var(--orca-danger, #b91c1c);
+  font-weight: 600;
+}
+
+.orca-grid-header {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--orca-muted, #f1f3f5);
+  color: var(--orca-muted-foreground, #5b6472);
+  font-weight: 600;
+  text-align: center;
+  z-index: 1;
+}
+
+.orca-grid-column-header {
+  top: 0;
+  height: var(--grid-header-height);
+}
+
+.orca-grid-row-header {
+  left: 0;
+  width: var(--grid-row-header-width);
+}
+
+.orca-grid-header.is-selected {
+  background: var(--orca-accent, #dbeafe);
+  color: var(--orca-foreground, #1f2937);
+}
+
+.orca-grid-address {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: 2px 4px;
+  background: var(--orca-muted, #f1f3f5);
+  border-right: 1px solid var(--orca-border, #d7dbe2);
+  border-bottom: 1px solid var(--orca-border, #d7dbe2);
+  color: var(--orca-muted-foreground, #5b6472);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+
+.orca-grid-freeze-top,
+.orca-grid-freeze-left,
+.orca-grid-freeze-corner,
+.orca-grid-col-frozen,
+.orca-grid-row-frozen,
+.orca-grid-corner {
+  isolation: isolate;
+}
+
+.orca-grid.has-frozen-rows .orca-grid-freeze-top::after,
+.orca-grid.has-frozen-cols .orca-grid-freeze-left::after {
+  position: absolute;
+  z-index: 20;
+  display: block;
+  background: var(--orca-primary, #2563eb);
+  content: "";
+  pointer-events: none;
+}
+
+.orca-grid.has-frozen-rows .orca-grid-freeze-top::after {
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 2px;
+}
+
+.orca-grid.has-frozen-cols .orca-grid-freeze-left::after {
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 2px;
+}
+
+.orca-grid.has-frozen-rows .orca-grid-freeze-corner {
+  border-bottom: 2px solid var(--orca-primary, #2563eb);
+}
+
+.orca-grid.has-frozen-cols .orca-grid-freeze-corner {
+  border-right: 2px solid var(--orca-primary, #2563eb);
+}
+
+@media (max-width: 640px) {
+  .orca-grid {
+    font-size: 11px;
+  }
+
+  .orca-grid-cell {
+    padding-right: 4px;
+    padding-left: 4px;
+  }
+}

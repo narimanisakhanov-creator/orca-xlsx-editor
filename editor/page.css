@@ -1,0 +1,71 @@
+/* Base shell for the editor frame. Orca injects its theme as --orca-* custom properties on <html>;
+   every colour here goes through var(--orca-*, fallback) so a theme switch needs no reload.
+   Fallbacks carry the light palette, the .dark block carries the dark one, because a custom
+   property cannot pick its own fallback by theme. */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+}
+
+html {
+  color-scheme: light;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--orca-background, #ffffff);
+  color: var(--orca-foreground, #0a0a0a);
+  font-family: var(--orca-font-family, system-ui, -apple-system, "Segoe UI", sans-serif);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow: hidden;
+}
+
+html.dark body {
+  background: var(--orca-background, #18181b);
+  color: var(--orca-foreground, #fafafa);
+}
+
+#app {
+  height: 100vh;
+}
+
+/* Visible until the app removes it: an empty frame otherwise looks like a crash. */
+#boot {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  text-align: center;
+  background: var(--orca-background, #ffffff);
+  color: var(--orca-muted-foreground, #737373);
+}
+
+html.dark #boot {
+  background: var(--orca-background, #18181b);
+  color: var(--orca-muted-foreground, #a1a1aa);
+}
+
+/* The [hidden] attribute must win over display:flex. */
+#boot[hidden] {
+  display: none;
+}
+
+#boot .boot-text {
+  margin: 0;
+  max-width: 48ch;
+}

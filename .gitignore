@@ -1,0 +1,14 @@
+# Dependencies
+node_modules/
+
+# Orca's generated typings for this plugin.
+.orca/
+
+# Development scratch.
+.audit/
+demo/dist/
+*.local
+
+# editor/assets/ is deliberately NOT ignored: the built bundle, stylesheet and vendored ExcelJS are
+# what a plugin installed from this repository loads. Without them the editor frame stays empty.
+# Run `npm run build` before committing so `npm run check:dist` stays green.
