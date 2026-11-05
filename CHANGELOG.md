@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.1.1
+
+- The hand-off popup opens leftwards from its button, so the editor frame no longer clips the
+  preview of the text that will be sent.
+
+
 ## 1.1.0
 
 Hand the table to an agent.
