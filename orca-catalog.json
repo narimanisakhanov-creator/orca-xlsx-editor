@@ -18,8 +18,8 @@
       "releases": [
         {
           "version": "1.1.0",
-          "commit": "02dd98a87e076f5f152a4164dbb6bed991b100af",
-          "contentHash": "65cf9b1f737c1f6fcbae15906fce072585321567b698217f2a1887aac9a2a0b4",
+          "commit": "b0516193cb7d905d04c404eb18c8b9338040fccd",
+          "contentHash": "1e90b32b63b934c4ce7ea36472f5480a3a1da1d80c8964f8b3af6faf20f630cc",
           "execution": "trusted-worker",
           "minimumOrca": "1.4.248",
           "name": "XLSX Editor",
