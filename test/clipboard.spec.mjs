@@ -2,13 +2,9 @@
 // The fixture case loads a real workbook through the model (hence `exceljs`, hence `.spec`).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-import path from 'node:path'
 import { selectionToTsv, selectionToCsv, selectionToMarkdown, copyText } from '../src/ui/clipboard.js'
 import { loadWorkbook } from '../src/model/workbook.js'
-
-const HERE = path.dirname(fileURLToPath(import.meta.url))
+import { fixtureBytes } from './helpers/fixtures.mjs'
 
 const text = (display, formula = null) => ({ kind: 'text', value: display, display, formula })
 const number = (value, display, formula = null) => ({ kind: 'number', value, display, formula })
@@ -231,13 +227,13 @@ test('copyText: reports failure when the frame refuses the command', () => {
 })
 
 test('styled workbook: Ledger A1:C3 copies as the grid shows it', async () => {
-  const bytes = readFileSync(path.join(HERE, 'fixtures', 'styled.xlsx'))
-  const model = await loadWorkbook(new Uint8Array(bytes))
+  const bytes = fixtureBytes('styled.xlsx')
+  const model = await loadWorkbook(bytes)
   const sheet = model.sheets[0]
   const selection = { r1: 0, c1: 0, r2: 2, c2: 2 }
 
-  // Column C holds formulas openpyxl wrote without a cached result, so the grid (and therefore the
-  // clipboard) shows the formula text there; columns A and B show their formatted values.
+  // Column C holds formulas the fixture writes without a cached result, so the grid (and therefore
+  // the clipboard) shows the formula text there; columns A and B show their formatted values.
   assert.equal(
     selectionToTsv(sheet, selection),
     [

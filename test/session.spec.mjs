@@ -2,16 +2,10 @@
 // lost or silently mislabelled saved; every one of them failed before the fixes.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-import path from 'node:path'
 
 import { readZip, writeZip } from '../src/write/zip.js'
+import { fixtureBytes } from './helpers/fixtures.mjs'
 
-const HERE = path.dirname(fileURLToPath(import.meta.url))
-const FIXTURES = path.join(HERE, 'fixtures')
-
-const fixture = (name) => new Uint8Array(readFileSync(path.join(FIXTURES, name)))
 const copy = (bytes) => Uint8Array.from(bytes)
 
 /** The parts of a workbook as name to bytes, through the plugin's own reader. */
@@ -118,7 +112,7 @@ function createHost(bytes) {
 }
 
 async function withHost(file, body) {
-  const original = fixture(file)
+  const original = fixtureBytes(file)
   const host = createHost(original)
   globalThis.orca = host.api
   try {

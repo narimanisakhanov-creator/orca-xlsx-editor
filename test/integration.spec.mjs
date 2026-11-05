@@ -2,13 +2,8 @@
 // Orca's session does, so a real edit can be saved and re-read from bytes.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-import path from 'node:path'
 import { readZip } from '../src/write/zip.js'
-
-const HERE = path.dirname(fileURLToPath(import.meta.url))
-const FIXTURES = path.join(HERE, 'fixtures')
+import { fixtureBytes } from './helpers/fixtures.mjs'
 
 /**
  * Stands in for `orca.document.session` with the same contract: one edit in flight, debounce,
@@ -109,7 +104,7 @@ function fakeHost(bytes, options = {}) {
 }
 
 async function withHost(file, fn) {
-  const bytes = readFileSync(path.join(FIXTURES, file))
+  const bytes = fixtureBytes(file)
   const host = fakeHost(bytes)
   globalThis.orca = host.api
   try {

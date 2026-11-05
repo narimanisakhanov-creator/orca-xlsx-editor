@@ -1,7 +1,7 @@
 // Contract §5: ExcelJS to the view model. Runs under `node --test`, no DOM, no Orca API.
 //
-// The fixtures are read-only: rich.xlsx and styled.xlsx were written by openpyxl (see
-// scripts/make-fixtures.py), so the expected values here are what an independent writer produced.
+// The fixtures are read-only and are built by test/helpers/build-fixtures.mjs from hand-written
+// OOXML parts, so the expected values here are what an independent writer produced.
 
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
@@ -13,8 +13,7 @@ import { unzipSync, zipSync } from 'fflate'
 import { loadWorkbook, normalizeAbsoluteTargets } from '../src/model/workbook.js'
 import { formatValue, isDateFormat } from '../src/model/numfmt.js'
 import { resolveStyle, themePalette } from '../src/model/style.js'
-
-const bytesOf = (name) => new Uint8Array(readFileSync(new URL(`./fixtures/${name}`, import.meta.url)))
+import { fixtureBytes as bytesOf } from './helpers/fixtures.mjs'
 
 async function loadFixture(name) {
   return loadWorkbook(bytesOf(name))
@@ -58,7 +57,7 @@ test('rich.xlsx Summary: freeze pane, column widths, row height', async () => {
   const [summary] = (await loadFixture('rich.xlsx')).sheets
 
   assert.deepEqual(summary.freeze, { rows: 1, cols: 1 })
-  // openpyxl wrote width 44 for column A; the Excel rule wch * 7 + 5 gives 313 px.
+  // The fixture writes width 44 for column A; the Excel rule wch * 7 + 5 gives 313 px.
   assert.equal(summary.colWidths.get(0), 313)
   assert.equal(summary.colWidths.get(1), 13 * 7 + 5)
   assert.equal(summary.colWidths.get(2), 20 * 7 + 5)
@@ -92,7 +91,7 @@ test('rich.xlsx Summary: number, date and formula cells render as Excel does', a
   assert.equal(margin.value.display, '8.12%')
 
   const opened = summary.cells.get('1,4')
-  // openpyxl stored the date column as text, so the format does not turn it into a date.
+  // The fixture stores the date column as text, so the format does not turn it into a date.
   assert.equal(opened.value.kind, 'text')
   assert.equal(opened.value.display, '2019-04-01')
 
@@ -161,7 +160,7 @@ test('styled.xlsx: 166x16 Ledger sheet, freeze B2, banded fill, thin borders', a
   // its 166 rows across 16 columns, so all of them are materialised.
   assert.equal(sheet.cells.size, 166 * 16)
 
-  // Width 43 and 14 are what openpyxl wrote to <col>; Excel's char-to-pixel rule gives 306 and 103.
+  // Width 43 and 14 are what the fixture writes to <col>; Excel's char-to-pixel rule gives 306 and 103.
   assert.equal(sheet.colWidths.get(0), 306)
   assert.equal(sheet.colWidths.get(1), 103)
   assert.equal(sheet.colWidths.get(15), 103)
@@ -191,7 +190,7 @@ test('styled.xlsx: A2 fill and thin borders, number formats per column', async (
   assert.equal(sheet.cells.get('1,3').value.display, '250,200')
   assert.equal(sheet.cells.get('1,5').value.display, '2.00%')
   assert.equal(sheet.cells.get('1,7').value.display, '82.0')
-  // E2/E3 are formulas openpyxl wrote without a cached result, so they display their formula text.
+  // E2/E3 are formulas the fixture writes without a cached result, so they display their formula text.
   assert.equal(sheet.cells.get('1,4').value.formula, 'B2-D2')
 
   const a1 = sheet.cells.get('0,0')

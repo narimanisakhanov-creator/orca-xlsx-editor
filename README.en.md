@@ -8,7 +8,7 @@
   <a href="https://github.com/narimanisakhanov-creator/orca-xlsx-editor/releases/latest"><img src="https://img.shields.io/github/v/release/narimanisakhanov-creator/orca-xlsx-editor?label=release&color=5f7f95" alt="Latest release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-6b7280" alt="MIT license"></a>
   <img src="https://img.shields.io/badge/Orca-%E2%89%A51.4.248-58758a" alt="Orca 1.4.248 or newer">
-  <img src="https://img.shields.io/badge/tests-168%20passing-6f8796" alt="168 tests passing">
+  <img src="https://img.shields.io/badge/tests-173%20passing-6f8796" alt="173 tests passing">
   <img src="https://img.shields.io/badge/formats-xlsx%20%2F%20xlsm-4f7c8a" alt="xlsx and xlsm formats">
 </p>
 
@@ -97,7 +97,9 @@ orca plugin check .
 orca plugin test .
 ```
 
-In the current repository snapshot, `npm test` reports 168 passing tests. `npm run build` creates `editor/assets/` and checks the resulting distribution; `check:dist` repeats those checks without writing. `orca plugin validate`, `check` and `test` run Orca's manifest, package and test checks.
+In the current repository snapshot, `npm test` reports 173 passing tests. `npm run build` creates `editor/assets/` and checks the resulting distribution; `check:dist` repeats those checks without writing. `orca plugin validate`, `check` and `test` run Orca's manifest, package and test checks.
+
+The test workbooks are not in the repository: a public plugin repository carries no binary files, which is what the Orca catalog requires. `rich.xlsx`, `macro.xlsm` and `styled.xlsx` are assembled by `test/helpers/build-fixtures.mjs` from plain OOXML strings, packed into a ZIP by `fflate`; a test gets a book through `test/helpers/fixtures.mjs`, which writes the files on first use. So `git clone && npm ci && npm test` works with no preparation and no Python, and the build is deterministic: zip entries carry a fixed timestamp, and two runs produce byte-identical workbooks. To rebuild the books by hand, run `node test/helpers/build-fixtures.mjs`; the `test/fixtures/` directory is git-ignored.
 
 The `orca-catalog.json` catalog is regenerated with `node scripts/write-catalog.mjs` after a build and before the release commit.
 

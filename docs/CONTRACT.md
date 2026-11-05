@@ -262,3 +262,37 @@ no Orca API — so `node --test` runs them directly; they copy the display text,
 `formulas` is set. `copyText` is the file's only DOM-facing function: the isolated frame has no
 `navigator.clipboard`, so it selects a hidden textarea and runs the legacy `copy` command, then
 removes the node and restores focus. It returns whether the copy happened.
+
+## 10. Test fixtures
+
+The three workbooks the tests read — `rich.xlsx`, `macro.xlsm`, `styled.xlsx` — are **not** in the
+repository. A public plugin repository carries no spreadsheet binaries (the Orca catalog rejects
+them as `binary-files`), so they are assembled at test time by `test/helpers/build-fixtures.mjs`:
+
+- `buildFixtures()` returns `{ 'rich.xlsx', 'macro.xlsm', 'styled.xlsx' }` as `Uint8Array`s, with no
+  filesystem, clock or randomness involved — two runs produce byte-identical archives.
+- `node test/helpers/build-fixtures.mjs` (or `npm run fixtures`) writes the three files into
+  `test/fixtures/`, which is git-ignored (`/test/fixtures/*.xlsx`, `*.xlsm`, `*.bin`, `*.tmp`).
+  Deleting that directory is safe: the next test run rebuilds it.
+- `test/helpers/fixtures.mjs` exports `fixturePath(name)` and `fixtureBytes(name)`. The first call in
+  a test process builds the books and writes them, so `git clone && npm ci && npm test` needs no
+  preparation and no Python.
+
+The parts are plain OOXML strings packed by fflate. That keeps the fixtures independent of both
+things under test — the reader (`src/model/workbook.js` over ExcelJS) and the writer
+(`src/write/zip.js`) — since no ExcelJS workbook is used to build them, a reader bug cannot hide
+behind a fixture that was written by that reader.
+
+What the books contain, and which parts of this contract they exercise:
+
+| Book | Contents |
+| --- | --- |
+| `rich.xlsx` | `Summary` / `Notes` / `Plain`. Painted header (`FF1F4E79` fill, bold white, centered, wrapped, thin `FFB0B0B0` borders, 30 pt row), widths 44/13/20/10/14, five data rows with `#,##0`, `#,##0.00 "RUB"`, `0.00%` and a text date column, `=B{r}*48.7` formulas with no cached result, banded rows, a bold `Total` row with `=SUM(...)`, the merged `A9:E9`, freeze `B2`, conditional formatting on `D2:D6`, the defined name `SalesTotal`, a 200-row `Plain` sheet, and a `Notes` sheet with no styling at all. |
+| `macro.xlsm` | The same parts plus `xl/vbaProject.bin` (10 240 deterministic bytes) and its `[Content_Types].xml` override — the byte-preserving save must copy it untouched. |
+| `styled.xlsx` | One `Ledger` sheet, 166 × 16, the same painted header and thin borders on every cell, banded body rows, widths 43/14, `#,##0.00` / `#,##0` / `#,##0;[Red]-#,##0` / `0.00%` / `#,##0.0`, formulas in `C` and `E`, freeze `B2`. |
+
+Tests assert on properties, not on recorded CRC or size numbers: an assertion that pinned bytes would
+only restate the generator. `test/zip.spec.mjs` checks instead that each header checksum equals
+`crc32(data)`, that no entry is empty, and that the part count and names are the ones the fixture is
+supposed to have.
+

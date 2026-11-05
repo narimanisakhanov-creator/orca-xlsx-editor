@@ -15,3 +15,10 @@ demo/dist/
 
 # Verification captures, not part of the plugin.
 installed-*.png
+
+# The workbook fixtures are built by test/helpers/build-fixtures.mjs at test time; a public plugin
+# repository carries no spreadsheet binaries, which is why the catalog rejected the previous ones.
+/test/fixtures/*.xlsx
+/test/fixtures/*.xlsm
+/test/fixtures/*.bin
+/test/fixtures/*.tmp

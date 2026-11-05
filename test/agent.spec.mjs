@@ -2,15 +2,11 @@
 // themselves, mounted on a stand-in `orca` so no terminal and no Orca window are involved.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-import path from 'node:path'
 import { TEXT_LIMIT, buildHandoff, rankAgents, readSend, truncateText } from '../worker/handoff.js'
 import activate from '../worker/main.js'
 import { selectionToMarkdown, selectionToTsv } from '../src/ui/clipboard.js'
 import { loadWorkbook } from '../src/model/workbook.js'
-
-const HERE = path.dirname(fileURLToPath(import.meta.url))
+import { fixtureBytes } from './helpers/fixtures.mjs'
 
 const agent = (terminalId, state, stateStartedAt, title = null) => ({ terminalId, state, stateStartedAt, title, agent: null })
 
@@ -43,7 +39,7 @@ test('the host text limit is the 4096 Orca enforces', () => {
 })
 
 test('a handoff is one context line and the table, for a real workbook range', async () => {
-  const workbook = await loadWorkbook(new Uint8Array(readFileSync(path.join(HERE, 'fixtures/styled.xlsx'))))
+  const workbook = await loadWorkbook(fixtureBytes('styled.xlsx'))
   const sheet = workbook.sheets[0]
   const box = { r1: 0, c1: 0, r2: 3, c2: 3 }
 

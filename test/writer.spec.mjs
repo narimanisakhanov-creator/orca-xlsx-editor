@@ -2,9 +2,9 @@
 //
 // Deliberately independent of src/write/zip.js: fixtures go straight through
 // fflate and the entries are hand-built in the ZipEntry shape of the contract.
+// The books themselves come from test/helpers/build-fixtures.mjs, which writes OOXML by hand.
 
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { unzipSync, zipSync } from 'fflate';
 import ExcelJS from 'exceljs';
@@ -20,14 +20,10 @@ import {
 } from '../src/write/xml.js';
 import { applyEdits, xlsxPackage } from '../src/write/xlsx-writer.js';
 import { loadWorkbook } from '../src/model/workbook.js';
+import { fixtureBytes as loadFixture } from './helpers/fixtures.mjs';
 
-const FIXTURES = new URL('./fixtures/', import.meta.url);
 const DECODER = new TextDecoder();
 const ENCODER = new TextEncoder();
-
-function loadFixture(name) {
-  return new Uint8Array(readFileSync(new URL(name, FIXTURES)));
-}
 
 /** Entries in the contract's ZipEntry shape, without touching the zip slice. */
 function entriesFrom(bytes) {

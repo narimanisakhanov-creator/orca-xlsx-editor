@@ -8,7 +8,7 @@
   <a href="https://github.com/narimanisakhanov-creator/orca-xlsx-editor/releases/latest"><img src="https://img.shields.io/github/v/release/narimanisakhanov-creator/orca-xlsx-editor?label=release&color=5f7f95" alt="Последний релиз"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-6b7280" alt="Лицензия MIT"></a>
   <img src="https://img.shields.io/badge/Orca-%E2%89%A51.4.248-58758a" alt="Orca 1.4.248 или новее">
-  <img src="https://img.shields.io/badge/tests-168%20passing-6f8796" alt="168 тестов проходят">
+  <img src="https://img.shields.io/badge/tests-173%20passing-6f8796" alt="173 теста проходят">
   <img src="https://img.shields.io/badge/formats-xlsx%20%2F%20xlsm-4f7c8a" alt="Форматы xlsx и xlsm">
 </p>
 
@@ -98,7 +98,9 @@ orca plugin check .
 orca plugin test .
 ```
 
-`npm test` в текущем снимке репозитория: 168 тестов проходят. `npm run build` собирает содержимое `editor/assets/` и проверяет итоговый дистрибутив; `check:dist` повторяет проверки без записи. Команды `orca plugin validate`, `check` и `test` проверяют манифест, упаковку и тесты средствами Orca.
+`npm test` в текущем снимке репозитория: 173 теста проходят. `npm run build` собирает содержимое `editor/assets/` и проверяет итоговый дистрибутив; `check:dist` повторяет проверки без записи. Команды `orca plugin validate`, `check` и `test` проверяют манифест, упаковку и тесты средствами Orca.
+
+Тестовые книги не лежат в репозитории: в публичном репозитории плагина нет бинарных файлов, этого требует каталог Orca. `rich.xlsx`, `macro.xlsm` и `styled.xlsx` собирает `test/helpers/build-fixtures.mjs` из обычных OOXML-строк, а `fflate` упаковывает их в ZIP; тест получает книгу через `test/helpers/fixtures.mjs`, который при первом обращении создаёт файлы. Поэтому `git clone && npm ci && npm test` работает без подготовки и без Python, а сборка детерминирована: у записей ZIP фиксированное время, и два прогона дают побайтово одинаковые книги. Пересобрать книги вручную можно командой `node test/helpers/build-fixtures.mjs`; каталог `test/fixtures/` с книгами добавлен в `.gitignore`.
 
 Каталог `orca-catalog.json` пересобирается командой `node scripts/write-catalog.mjs` после сборки и перед релизным коммитом.
 
