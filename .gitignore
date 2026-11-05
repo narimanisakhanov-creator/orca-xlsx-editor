@@ -12,3 +12,6 @@ demo/dist/
 # editor/assets/ is deliberately NOT ignored: the built bundle, stylesheet and vendored ExcelJS are
 # what a plugin installed from this repository loads. Without them the editor frame stays empty.
 # Run `npm run build` before committing so `npm run check:dist` stays green.
+
+# Verification captures, not part of the plugin.
+installed-*.png
