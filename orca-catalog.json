@@ -17,9 +17,9 @@
       ],
       "releases": [
         {
-          "version": "1.1.1",
-          "commit": "b89c0a088cd420341a56218c761f08424c0191f9",
-          "contentHash": "3f405c687d339dfb665bedef33c9effc1e71b330e6d76ef55621e03ca17d6c1a",
+          "version": "1.1.2",
+          "commit": "7fe67a7d32477b46834a74530abbffdbf94c40e8",
+          "contentHash": "5713c673c0ea68e90773be81808ccfad7ddb86c1f84e24c58657a92dfecf3f23",
           "execution": "trusted-worker",
           "minimumOrca": "1.4.248",
           "name": "XLSX Editor",
