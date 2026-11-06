@@ -18,6 +18,7 @@
   <a href="#installation">Installation</a> ·
   <a href="#capabilities">Capabilities</a> ·
   <a href="#hand-off-to-an-agent">Hand-off to an agent</a> ·
+  <a href="#access-and-security">Access</a> ·
   <a href="#how-saving-works">How saving works</a> ·
   <a href="#limitations">Limitations</a> ·
   <a href="#development">Development</a> ·
@@ -71,6 +72,17 @@ For this the plugin runs in the `trusted-worker` profile and asks for two capabi
 `agent:read` to see the workspace's agents, and `terminal:send` to type into one terminal. It reads
 and launches nothing else.
 
+## Access and security
+
+The editor is sandboxed: it draws a workbook, receives bytes and hands new bytes back. It never learns the file's path, and has no file system and no network.
+
+The **В агента** hand-off needs two Orca APIs a frame cannot call, so the plugin ships a Node worker and asks for two capabilities:
+
+- `agent:read` — `agents.list`, to offer the agents of the current workspace;
+- `terminal:send` — `terminal.sendText`, to type the chosen text into the chosen terminal.
+
+Both calls live only in `worker/main.js`, only inside its two handlers, and only after a press. The text is inserted without Enter by default, is cut at Orca's 4096-character limit, and is never sent by the plugin itself — no timer, no event. Details: [SECURITY.md](SECURITY.md).
+
 ## How saving works
 
 An Excel workbook is a ZIP of XML parts; the editor changes only `<c>` elements in the XML of sheets that were edited. Untouched ZIP entries retain their original compressed bytes, while text values are written inline so `sharedStrings.xml` is not rewritten. Macros and every other untouched part remain byte-for-byte unchanged. When a cell actually changes and the workbook carries `calcChain.xml`, the chain is removed, relationships are updated, and `fullCalcOnLoad="1"` asks Excel to recalculate; a save with no cell changes leaves this bookkeeping untouched.
@@ -106,6 +118,7 @@ The `orca-catalog.json` catalog is regenerated with `node scripts/write-catalog.
 ## Changes
 
 - [Changelog](CHANGELOG.md)
+- [Security and access](SECURITY.md)
 - [MIT license](LICENSE)
 - [Third-party notices](THIRD_PARTY_NOTICES.md)
 - [Русская версия](README.md)
