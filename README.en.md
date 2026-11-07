@@ -77,7 +77,7 @@ orca plugin check .
 orca plugin test .
 ```
 
-`npm test` builds the test workbooks from OOXML strings in a temporary directory and runs the full Node test suite. `npm run build` regenerates `editor/assets/`; `check:dist` verifies the build without writing. Release: commit the content, create an annotated tag, then write `orca-catalog.json` in a separate commit (the order is documented in `scripts/write-catalog.mjs`).
+`npm test` builds the test workbooks from OOXML strings in the git-ignored `test/fixtures` directory and runs the full Node test suite. `npm run build` regenerates `editor/assets/`; `check:dist` verifies the build without writing. Release: commit the content, create an annotated tag, then write `orca-catalog.json` in a separate commit (the order is documented in `scripts/write-catalog.mjs`).
 
 - [Changelog](CHANGELOG.md)
 - [Security and access](SECURITY.md)

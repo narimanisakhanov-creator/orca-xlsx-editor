@@ -77,7 +77,7 @@ orca plugin check .
 orca plugin test .
 ```
 
-`npm test` собирает тестовые книги из OOXML-строк во временном каталоге и запускает полный набор тестов Node.js. `npm run build` пересобирает `editor/assets/`; `check:dist` проверяет сборку без записи. Релиз: коммит содержимого → annotated tag → запись `orca-catalog.json` отдельным коммитом (порядок описан в `scripts/write-catalog.mjs`).
+`npm test` собирает тестовые книги из OOXML-строк в git-игнорируемом каталоге `test/fixtures` и запускает полный набор тестов Node.js. `npm run build` пересобирает `editor/assets/`; `check:dist` проверяет сборку без записи. Релиз: коммит содержимого → annotated tag → запись `orca-catalog.json` отдельным коммитом (порядок описан в `scripts/write-catalog.mjs`).
 
 - [Журнал изменений](CHANGELOG.md)
 - [Безопасность и доступы](SECURITY.md)
