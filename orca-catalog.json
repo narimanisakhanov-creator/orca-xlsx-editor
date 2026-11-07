@@ -11,15 +11,15 @@
         "url": "https://github.com/narimanisakhanov-creator/orca-xlsx-editor",
         "ref": "main"
       },
-      "description": "Open and edit Excel workbooks in Orca with their formatting: fills, fonts, borders, number formats, merged cells, frozen panes and every sheet. Saves in place without touching the parts it did not edit. Hands a selection or a sheet to an agent in your workspace as a Markdown table or TSV.",
+      "description": "Open and edit Excel workbooks in Orca with their formatting: fills, fonts, borders, number formats, merged cells, frozen panes and every sheet. Insert or delete rows and columns with formulas and references updated safely, search the whole workbook, and copy with formatting. Saves in place without touching the parts it did not edit. Hands a selection to an agent in your workspace as a Markdown table or TSV.",
       "categories": [
         "editors"
       ],
       "releases": [
         {
-          "version": "1.1.3",
-          "commit": "3450d6bf984ad44db6525d15db6a58d5d045f73d",
-          "contentHash": "6e84b1765c0546cd45b6480990f1a3a777dbd365136f780ec54aa97ba522d9a5",
+          "version": "1.1.4",
+          "commit": "74a34d527c53d7d1e50611a6d9a170d319cc7a8e",
+          "contentHash": "e4d8a0753b6674426fcf983944f6698e60d89e1509949b21ac947c55923d460c",
           "execution": "trusted-worker",
           "minimumOrca": "1.4.248",
           "name": "XLSX Editor",
@@ -43,14 +43,14 @@
             "icon": {
               "path": "images/icon.png",
               "alt": "XLSX Editor",
-              "sha256": "65f7d1fc78051e249ec8ee923c63906a317d9f10f7446af0d5c6aff7998064cb",
+              "sha256": "e7c8035ce082ae1d23f9224187c0ff283ccf9c43587ff95d67c2f3444faea079",
               "width": 256,
               "height": 256
             },
             "cover": {
               "path": "images/cover.png",
               "alt": "A ledger workbook in the editor: painted header, banded rows with borders, currency and percentage columns, frozen panes, and the copy and export controls",
-              "sha256": "098f5ed064da8e279a7a73327549e3e35806f87a9eecdefb67aeb29236feed5a",
+              "sha256": "b76456fc3c655aa858d1cd32f1dd552f79e5acd1ff7f94856b9863e4a28d57aa",
               "width": 1600,
               "height": 1000
             },
