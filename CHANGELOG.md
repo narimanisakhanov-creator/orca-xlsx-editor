@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.1.5
+
+Automatic UI language and a shorter README.
+
+- The interface follows Orca's UI language (`orca.locale`): a `ru` tag gives Russian, every other tag
+  gives English. The worker receives the same locale, so send refusals, agent states and the
+  hand-off context header use the same language as the editor.
+- README and README.en.md are rewritten as a short overview: install, capabilities, how reading,
+  saving, structural edits and the hand-off work, limitations, development.
+- The test suite no longer references a workbook outside the repository; all fixtures are generated
+  from OOXML strings, so the repository carries no machine-specific paths.
+
 ## 1.1.4
 
 A more tolerant reader, structural row and column edits, search, and a hand-off that refuses instead

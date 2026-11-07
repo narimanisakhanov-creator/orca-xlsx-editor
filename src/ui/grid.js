@@ -1,3 +1,5 @@
+import { t } from '../i18n.js'
+
 const DEFAULT_ROW_HEIGHT = 24
 const DEFAULT_COL_WIDTH = 96
 const HEADER_HEIGHT = 26
@@ -18,6 +20,8 @@ export function createGrid(container, options = {}) {
   }
 
   const readOnly = Boolean(options.readOnly)
+  const locale = options.locale === 'ru' ? 'ru' : 'en'
+  const tr = (key, values) => t(locale, key, values)
   const listeners = new Map()
   let model = null
   let sheet = null
@@ -53,7 +57,7 @@ export function createGrid(container, options = {}) {
   viewport.className = 'orca-grid-viewport'
   viewport.tabIndex = 0
   viewport.setAttribute('role', 'grid')
-  viewport.setAttribute('aria-label', 'Worksheet grid')
+  viewport.setAttribute('aria-label', tr('grid.aria'))
 
   const canvas = document.createElement('div')
   canvas.className = 'orca-grid-canvas'
@@ -131,9 +135,7 @@ export function createGrid(container, options = {}) {
     formulaResultsStale = next
     staleNotice.hidden = !next
     root.classList.toggle('has-formula-stale', next)
-    staleNotice.textContent = next
-      ? 'Formula cells may show values that are out of date after edits. This editor does not recalculate formulas.'
-      : ''
+    staleNotice.textContent = next ? tr('grid.stale') : ''
     scrollCellIntoView(selection.r, selection.c)
     scheduleRender()
   }
@@ -165,7 +167,7 @@ export function createGrid(container, options = {}) {
   function setSheetData(nextSheet) {
     sheet = nextSheet
     viewport.removeAttribute('aria-activedescendant')
-    viewport.setAttribute('aria-label', sheet?.name ? `Worksheet ${sheet.name}` : 'Worksheet grid')
+    viewport.setAttribute('aria-label', sheet?.name ? tr('grid.ariaSheet', { name: sheet.name }) : tr('grid.aria'))
     rowSizes = []
     colSizes = []
     rowOffsets = [0]
@@ -581,8 +583,8 @@ export function createGrid(container, options = {}) {
     cell.setAttribute('aria-selected', selected ? 'true' : 'false')
     cell.setAttribute('aria-label', `${formatRef(r, c)}${cell.textContent ? ` ${cell.textContent}` : ''}`)
     if (staleFormula) {
-      cell.setAttribute('aria-label', `${cell.getAttribute('aria-label')}. Formula result may be out of date; this editor does not recalculate formulas.`)
-      cell.title = 'Formula result may be out of date; this editor does not recalculate formulas.'
+      cell.setAttribute('aria-label', `${cell.getAttribute('aria-label')}. ${tr('grid.staleCell')}`)
+      cell.title = tr('grid.staleCell')
     }
     return cell
   }

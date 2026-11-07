@@ -8,6 +8,8 @@
 // arbitrary cell values and bounds how much of a selection is materialized before the frame refuses
 // to send and offers the full text for manual copying.
 
+import { t } from '../src/i18n.js'
+
 /**
  * `terminal.sendText` refuses longer text: Orca's host API schema is
  * `z.string().min(1).max(PANEL_ACTION_TEXT_MAX_LENGTH)`, and `PANEL_ACTION_TEXT_MAX_LENGTH` is 4096.
@@ -52,7 +54,7 @@ function fenceMarker(body) {
  * does know the file it is named in the context line, and when it does not the line stays silent
  * rather than inventing one.
  */
-export function buildHandoff({ sheetName, range, format, cells, fileName } = {}) {
+export function buildHandoff({ sheetName, range, format, cells, fileName, locale = 'ru' } = {}) {
   const body = typeof cells === 'string' ? cells : ''
   if (body === '') return ''
   // A line break in a name would put the rest of that name on its own line, where a backtick run
@@ -63,10 +65,11 @@ export function buildHandoff({ sheetName, range, format, cells, fileName } = {})
   const file = flatten(fileName)
 
   const where = []
-  if (sheet) where.push(`лист «${sheet}»`)
-  if (area) where.push(`диапазон ${area}`)
-  if (file) where.push(`файл «${file}»`)
-  const header = where.length ? `Таблица из XLSX: ${where.join(', ')}` : 'Таблица из XLSX'
+  if (sheet) where.push(t(locale, 'handoff.sheet', { value: sheet }))
+  if (area) where.push(t(locale, 'handoff.range', { value: area }))
+  if (file) where.push(t(locale, 'handoff.file', { value: file }))
+  const parts = where.join(t(locale, 'handoff.join'))
+  const header = where.length ? `${t(locale, 'handoff.base')}: ${parts}` : t(locale, 'handoff.base')
 
   if (format !== 'tsv') return `${header}\n\n${body}`
   const fence = fenceMarker(body)
@@ -118,17 +121,17 @@ export function fitHandoffRows(rowCosts, budget) {
  * otherwise answer with a bare `invalid_params`. `enter` defaults to false: a handoff is text a
  * person reviews, and pressing Enter for them could submit half-written input to the agent.
  */
-export function readSend(input) {
-  if (!input || typeof input !== 'object') return { ok: false, reason: 'agent.send needs an object' }
+export function readSend(input, locale = 'en') {
+  if (!input || typeof input !== 'object') return { ok: false, reason: t(locale, 'send.needsObject') }
   const terminalId = input.terminalId
   if (typeof terminalId !== 'string' || terminalId.length === 0) {
-    return { ok: false, reason: 'Выберите агента с терминалом' }
+    return { ok: false, reason: t(locale, 'send.chooseAgent') }
   }
-  if (terminalId.length > TERMINAL_ID_MAX) return { ok: false, reason: 'Идентификатор терминала слишком длинный' }
+  if (terminalId.length > TERMINAL_ID_MAX) return { ok: false, reason: t(locale, 'send.terminalTooLong') }
   const text = input.text
-  if (typeof text !== 'string' || text.length === 0) return { ok: false, reason: 'Нечего передавать' }
+  if (typeof text !== 'string' || text.length === 0) return { ok: false, reason: t(locale, 'send.nothing') }
   if (input.enter !== undefined && typeof input.enter !== 'boolean') {
-    return { ok: false, reason: 'enter must be a boolean' }
+    return { ok: false, reason: t(locale, 'send.enterBoolean') }
   }
   return { ok: true, terminalId, text, enter: input.enter === true }
 }

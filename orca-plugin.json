@@ -3,7 +3,7 @@
   "manifestVersion": 2,
   "id": "xlsx-editor",
   "name": "XLSX Editor",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "description": "Open and edit Excel workbooks in Orca with their formatting: fills, fonts, borders, number formats, merged cells, frozen panes and every sheet. Insert or delete rows and columns with formulas and references updated safely, search the whole workbook, and copy with formatting. Saves in place without touching the parts it did not edit. Hands a selection to an agent in your workspace as a Markdown table or TSV.",
   "author": {
     "name": "Nariman Isakhanov",

@@ -9,6 +9,7 @@
 // never split into several messages: text over the limit is refused, not truncated or chunked.
 
 import { TEXT_LIMIT, rankAgents, readSend } from './handoff.js'
+import { resolveLocale, t } from '../src/i18n.js'
 
 /** A host failure is shown to the person verbatim; the code alone would not say what happened. */
 function describe(error) {
@@ -54,12 +55,14 @@ export default function activate(orca) {
   // the terminal was untouched (a timeout may already have typed): the person must inspect it, and
   // the worker never retries.
   orca.panels.handle('agent.send', async (input) => {
-    const request = readSend(input)
+    // Older callers did not send a locale; keep their Russian replies. New frames always do.
+    const locale = input?.locale === undefined ? 'ru' : resolveLocale(input.locale)
+    const request = readSend(input, locale)
     if (!request.ok) {
       return { accepted: false, sent: '', unknown: false, reason: request.reason }
     }
     if (sending.has(request.terminalId)) {
-      return { accepted: false, sent: '', unknown: false, reason: 'Передача в этот терминал уже идёт' }
+      return { accepted: false, sent: '', unknown: false, reason: t(locale, 'send.inProgress') }
     }
     sending.add(request.terminalId)
     try {
@@ -68,7 +71,7 @@ export default function activate(orca) {
           accepted: false,
           sent: '',
           unknown: false,
-          reason: `Текст длиннее ${TEXT_LIMIT} символов; отправка отменена — скопируйте полный текст вручную`
+          reason: t(locale, 'send.tooLong', { limit: TEXT_LIMIT })
         }
       }
 
@@ -80,9 +83,9 @@ export default function activate(orca) {
         })
         if (result?.accepted === true) return { accepted: true, sent: request.text, unknown: false }
         if (result?.accepted === false) {
-          return { accepted: false, sent: request.text, unknown: false, reason: 'Терминал не принял текст' }
+          return { accepted: false, sent: request.text, unknown: false, reason: t(locale, 'send.notAccepted') }
         }
-        return { accepted: false, sent: request.text, unknown: true, reason: 'Хост не подтвердил результат' }
+        return { accepted: false, sent: request.text, unknown: true, reason: t(locale, 'send.unknown') }
       } catch (error) {
         // A timeout is the important case: Orca can report it after the text was typed, so the frame
         // must not imply the handoff failed. Validation/capability refusals are the only throws that

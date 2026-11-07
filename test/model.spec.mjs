@@ -4,7 +4,6 @@
 // OOXML parts, so the expected values here are what an independent writer produced.
 
 import assert from 'node:assert/strict'
-import { existsSync, readFileSync } from 'node:fs'
 import { test } from 'node:test'
 
 import ExcelJS from 'exceljs'
@@ -680,23 +679,6 @@ test('many prefixed spreadsheet elements retain their values and structural shee
   assert.equal(model.sheets.length, 1)
   assert.equal(model.sheets[0].cells.get('0,0').value.display, 'Store')
   assert.equal(model.sheets[0].rowCount, 166)
-})
-
-// A workbook from the 481-file audit: two sheets whose table parts are reached through absolute
-// targets. Absent on another machine, so the test reports itself skipped rather than failing.
-const AUDIT_WORKBOOK = 'C:/Users/ВкусВилл/Downloads/Корректировки кафе ежедневный отчет/output/Корректировки_кафе_2026-10-22.xlsx'
-
-test('the audit workbook with absolute table targets opens', async (t) => {
-  if (!existsSync(AUDIT_WORKBOOK)) return t.skip('the audit workbook is not on this machine')
-
-  const bytes = new Uint8Array(readFileSync(AUDIT_WORKBOOK))
-  assert.ok(normalizeAbsoluteTargets(bytes) instanceof Uint8Array, 'needs rewriting')
-
-  const model = await loadWorkbook(bytes)
-  assert.deepEqual(model.sheets.map((sheet) => sheet.name), ['500 Минус-корректировки', '510 Инвентаризация'])
-  assert.deepEqual(model.sheets.map((sheet) => [sheet.rowCount, sheet.colCount]), [[18, 6], [18, 6]])
-  assert.deepEqual(model.sheets.map((sheet) => sheet.cells.size), [82, 82])
-  assert.equal(model.sheets[0].cells.get('4,4').value.display, '-3,208.87')
 })
 
 /* ------------------------------------------------------------------ group separators --------- */

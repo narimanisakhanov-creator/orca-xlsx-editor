@@ -3,6 +3,7 @@
 
 import { createGrid } from './grid.js'
 import { commitEdit, commitStructural, currentDocumentBytes, undo, redo, editState, loadModel, setDateSystem } from './document.js'
+import { resolveLocale, t as translate, agentState } from '../i18n.js'
 import { selectionToTsv, selectionToCsv, selectionToMarkdown, selectionToHtml, selectionFitsTextBudget, copyText, copyHtml } from './clipboard.js'
 import { searchWorkbook, continueSearch } from '../model/search.js'
 import { buildHandoff, fitHandoffRows, TEXT_LIMIT } from '../../worker/handoff.js'
@@ -23,14 +24,19 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
     return node
   }
 
+  // Orca's own UI language, not the browser's: a Russian Orca gets Russian, everything else
+  // English. The worker receives the same resolved locale with each request.
+  const locale = resolveLocale(globalThis.orca?.locale)
+  const tr = (key, values) => translate(locale, key, values)
+
   root.textContent = ''
 
   const shell = el('div', 'wb')
   const toolbar = el('div', 'wb-toolbar')
   const tabs = el('div', 'wb-tabs')
   const spacer = el('div', 'wb-toolbar-spacer')
-  const undoButton = el('button', 'wb-button', 'Undo')
-  const redoButton = el('button', 'wb-button', 'Redo')
+  const undoButton = el('button', 'wb-button', tr('undo'))
+  const redoButton = el('button', 'wb-button', tr('redo'))
   const stateLabel = el('span', 'wb-state')
 
   const menus = []
@@ -100,16 +106,16 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
   }
 
   let copyFormulas = false
-  const copyMenu = makeMenu({ label: 'Копировать', ariaLabel: 'Копировать выделение' })
-  copyMenu.add(menuItem('Копировать', 'Ctrl+C', () => copySelection(selectionToTsv)))
-  copyMenu.add(menuItem('С форматированием', '', copyFormattedSelection))
-  copyMenu.add(menuItem('Как Markdown', '', () => copySelection(selectionToMarkdown)))
-  copyMenu.add(menuItem('Как CSV', '', () => copySelection(selectionToCsv)))
+  const copyMenu = makeMenu({ label: tr('copy.menu'), ariaLabel: tr('copy.label') })
+  copyMenu.add(menuItem(tr('copy.action'), 'Ctrl+C', () => copySelection(selectionToTsv)))
+  copyMenu.add(menuItem(tr('copy.formatted'), '', copyFormattedSelection))
+  copyMenu.add(menuItem(tr('copy.markdown'), '', () => copySelection(selectionToMarkdown)))
+  copyMenu.add(menuItem(tr('copy.csv'), '', () => copySelection(selectionToCsv)))
   const formulaToggle = el('label', 'wb-menu-check')
   const formulaBox = el('input')
   formulaBox.type = 'checkbox'
-  formulaBox.setAttribute('aria-label', 'Формулы как текст')
-  formulaToggle.append(formulaBox, el('span', null, 'Формулы как текст'))
+  formulaBox.setAttribute('aria-label', tr('copy.formulas'))
+  formulaToggle.append(formulaBox, el('span', null, tr('copy.formulas')))
   formulaBox.addEventListener('change', () => {
     copyFormulas = formulaBox.checked
     // A handoff is built from the same text a copy would produce, so the preview has to follow.
@@ -117,17 +123,17 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
   })
   copyMenu.add(formulaToggle)
 
-  const exportMenu = makeMenu({ label: 'Экспорт', ariaLabel: 'Экспортировать лист в файл' })
-  exportMenu.add(menuItem('CSV (.csv)', '', () => exportSheet('csv')))
-  exportMenu.add(menuItem('Markdown (.md)', '', () => exportSheet('markdown')))
+  const exportMenu = makeMenu({ label: tr('export.menu'), ariaLabel: tr('export.label') })
+  exportMenu.add(menuItem(tr('export.csv'), '', () => exportSheet('csv')))
+  exportMenu.add(menuItem(tr('export.markdown'), '', () => exportSheet('markdown')))
 
   // Structural edits are transactional: the writer preflights the whole package and refuses
   // unsupported references before anything changes, and the history can undo them even after a save.
-  const structureMenu = makeMenu({ label: 'Строки', ariaLabel: 'Вставить или удалить строки и столбцы' })
-  structureMenu.add(menuItem('Вставить строки выше', '', () => structuralChange('insert', 'row')))
-  structureMenu.add(menuItem('Удалить строки', '', () => structuralChange('delete', 'row')))
-  structureMenu.add(menuItem('Вставить столбцы слева', '', () => structuralChange('insert', 'column')))
-  structureMenu.add(menuItem('Удалить столбцы', '', () => structuralChange('delete', 'column')))
+  const structureMenu = makeMenu({ label: tr('structure.menu'), ariaLabel: tr('structure.label') })
+  structureMenu.add(menuItem(tr('structure.insertRows'), '', () => structuralChange('insert', 'row')))
+  structureMenu.add(menuItem(tr('structure.deleteRows'), '', () => structuralChange('delete', 'row')))
+  structureMenu.add(menuItem(tr('structure.insertColumns'), '', () => structuralChange('insert', 'column')))
+  structureMenu.add(menuItem(tr('structure.deleteColumns'), '', () => structuralChange('delete', 'column')))
 
   // "В агента": `terminal.sendText` is a worker-only host method, so the button exists only when
   // this frame can reach its own worker. Nothing is ever sent on its own — the host requires a user
@@ -135,9 +141,8 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
   const workerBridge = globalThis.orca?.plugin
   const canHandoff = Boolean(workerBridge && typeof workerBridge.request === 'function')
 
-  const HANDOFF_FORMATS = [['markdown', 'Markdown-таблица'], ['tsv', 'TSV']]
-  const AGENT_STATE_TEXT = { working: 'работает', waiting: 'ожидает', blocked: 'нужен ответ', done: 'готово' }
-  const AGENT_STATES = new Set(Object.keys(AGENT_STATE_TEXT))
+  const HANDOFF_FORMATS = [['markdown', tr('agent.markdown')], ['tsv', tr('agent.tsv')]]
+  const AGENT_STATES = new Set(['working', 'waiting', 'blocked', 'done'])
 
   let handoffFormat = 'markdown'
   let handoffAgents = []
@@ -158,26 +163,26 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
   // idempotency, so a second concurrent call to the same terminal must not start.
   let handoffSending = false
 
-  const agentMenu = canHandoff ? makeMenu({ label: 'В агента', ariaLabel: 'Передать таблицу агенту' }) : null
+  const agentMenu = canHandoff ? makeMenu({ label: tr('agent.menu'), ariaLabel: tr('agent.label') }) : null
 
   if (agentMenu) {
     const popup = agentMenu.wrap.querySelector('.wb-menu-popup')
     // The popup holds a list, a select, a checkbox and a button: a form, not a menu.
     popup.classList.add('wb-handoff-popup')
     popup.setAttribute('role', 'dialog')
-    popup.setAttribute('aria-label', 'Передать таблицу агенту')
+    popup.setAttribute('aria-label', tr('agent.dialog'))
 
     handoffList = el('div', 'wb-agent-list')
     handoffList.setAttribute('role', 'radiogroup')
-    handoffList.setAttribute('aria-label', 'Агенты этого workspace')
+    handoffList.setAttribute('aria-label', tr('agent.listLabel'))
 
-    handoffEmpty = el('div', 'wb-empty', 'Нет активных агентов в этом workspace')
+    handoffEmpty = el('div', 'wb-empty', tr('agent.empty'))
     handoffEmpty.hidden = true
 
     const formatRow = el('label', 'wb-menu-check')
     const formatSelect = el('select', 'wb-select')
     handoffFormatSelect = formatSelect
-    formatSelect.setAttribute('aria-label', 'Формат таблицы')
+    formatSelect.setAttribute('aria-label', tr('agent.format'))
     for (const [value, text] of HANDOFF_FORMATS) {
       const option = el('option', null, text)
       option.value = value
@@ -188,16 +193,16 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
       handoffFormat = HANDOFF_FORMATS.some(([value]) => value === formatSelect.value) ? formatSelect.value : 'markdown'
       renderHandoffPreview()
     })
-    formatRow.append(el('span', null, 'Формат'), formatSelect)
+    formatRow.append(el('span', null, tr('agent.format')), formatSelect)
 
     const enterRow = el('label', 'wb-menu-check')
     handoffEnter = el('input')
     handoffEnter.type = 'checkbox'
-    handoffEnter.setAttribute('aria-label', 'Отправить сразу (Enter)')
-    enterRow.append(handoffEnter, el('span', null, 'Отправить сразу (Enter)'))
+    handoffEnter.setAttribute('aria-label', tr('agent.enter'))
+    enterRow.append(handoffEnter, el('span', null, tr('agent.enter')))
 
     handoffPreview = el('pre', 'wb-handoff-preview')
-    handoffPreview.setAttribute('aria-label', 'Предпросмотр того, что уйдёт агенту')
+    handoffPreview.setAttribute('aria-label', tr('agent.preview'))
 
     // Explains why a handoff is not being sent; the preview itself stays exactly what would be sent.
     handoffNotice = el('div', 'wb-empty')
@@ -206,12 +211,12 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
 
     // The full table is copied through the same legacy copy command the Copy menu uses. It is the
     // manual path when the text does not fit the single-message limit.
-    handoffCopy = el('button', 'wb-button wb-handoff-copy', 'Скопировать полный текст')
+    handoffCopy = el('button', 'wb-button wb-handoff-copy', tr('agent.copy'))
     handoffCopy.type = 'button'
-    handoffCopy.setAttribute('aria-label', 'Скопировать полный текст таблицы для ручной вставки')
+    handoffCopy.setAttribute('aria-label', tr('agent.copyLabel'))
     handoffCopy.addEventListener('click', copyFullHandoff)
 
-    handoffSend = el('button', 'wb-button wb-handoff-send', 'Передать')
+    handoffSend = el('button', 'wb-button wb-handoff-send', tr('agent.send'))
     handoffSend.type = 'button'
     handoffSend.disabled = true
     handoffSend.addEventListener('click', () => {
@@ -243,7 +248,7 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
     if (title) return title
     const kind = typeof agent?.agent === 'string' ? agent.agent.trim() : ''
     if (kind) return kind
-    return typeof agent?.terminalId === 'string' && agent.terminalId !== '' ? agent.terminalId : 'Без названия'
+    return typeof agent?.terminalId === 'string' && agent.terminalId !== '' ? agent.terminalId : tr('agent.untitled')
   }
 
   /** Draws the rows the worker returned: already ranked there, so the order is kept as it came. */
@@ -263,13 +268,13 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
       row.append(
         dot,
         el('span', 'wb-agent-name', agentName(agent)),
-        el('span', 'wb-agent-state', AGENT_STATE_TEXT[agent?.state] ?? '')
+        el('span', 'wb-agent-state', agentState(locale, agent?.state))
       )
       if (!id) {
         // Orca could not tie this agent's pane to a terminal it lists, so there is no address to
         // type into; offering the row would only produce a refusal on click.
         row.disabled = true
-        row.title = 'У этого агента нет терминала, которому можно передать текст'
+        row.title = tr('agent.noTerminal')
       } else {
         row.addEventListener('click', () => {
           handoffAgentId = id
@@ -281,7 +286,7 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
     }
     if (handoffAgents.length === 0) {
       handoffEmpty.hidden = false
-      handoffEmpty.textContent = handoffNote || 'Нет активных агентов в этом workspace'
+      handoffEmpty.textContent = handoffNote || tr('agent.empty')
     } else {
       handoffEmpty.hidden = true
     }
@@ -297,7 +302,7 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
     if (!agentMenu || handoffLoading) return
     handoffLoading = true
     // A list already on screen stays there while it refreshes; only an empty one says why it is.
-    handoffNote = handoffAgents.length === 0 ? 'Ищу агентов…' : ''
+    handoffNote = handoffAgents.length === 0 ? tr('agent.searching') : ''
     renderHandoffAgents()
     try {
       const result = await workerBridge.request('agent.list')
@@ -305,7 +310,7 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
       handoffNote = ''
     } catch (error) {
       handoffAgents = []
-      handoffNote = 'Не удалось получить список агентов'
+      handoffNote = tr('agent.listFailed')
       flash(describeError(error), true)
     } finally {
       handoffLoading = false
@@ -384,11 +389,11 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
     const sheet = model.sheets[active.sheet]
     const box = handoffBox()
     if (!sheet || !box) {
-      return { key: '', text: '', oversized: false, error: 'Нечего передавать' }
+      return { key: '', text: '', oversized: false, error: tr('handoff.nothing') }
     }
     const size = (box.r2 - box.r1 + 1) * (box.c2 - box.c1 + 1)
     if (size > EXPORT_CELL_LIMIT) {
-      return { key: '', text: '', oversized: false, error: `Выделение слишком велико (${size} ячеек; максимум ${EXPORT_CELL_LIMIT}). Уменьшите выделение.` }
+      return { key: '', text: '', oversized: false, error: tr('handoff.tooMany', { count: size, max: EXPORT_CELL_LIMIT }) }
     }
     const key = handoffKey(box)
     if (handoffCache?.key === key) return handoffCache.plan
@@ -406,9 +411,10 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
         sheetName: sheet.name,
         range: handoffRange(box),
         format: handoffFormat,
-        cells
+        cells,
+        locale
       })
-      if (text === '') plan = { key, text: '', oversized: false, error: 'Нечего передавать' }
+      if (text === '') plan = { key, text: '', oversized: false, error: tr('handoff.nothing') }
       else if (text.length > TEXT_LIMIT) plan = { key, text, oversized: true, error: '' }
       else plan = { key, text, oversized: false, error: '' }
     }
@@ -424,7 +430,7 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
     if (plan.error) {
       notice = plan.error
     } else if (plan.oversized) {
-      notice = `Полный текст больше ${TEXT_LIMIT} символов — отправка отключена. Скопируйте полный текст и вставьте вручную.`
+      notice = tr('handoff.tooLong', { limit: TEXT_LIMIT })
     }
     handoffNotice.textContent = notice
     handoffNotice.hidden = notice === ''
@@ -438,12 +444,12 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
     const sheet = model.sheets[active.sheet]
     const box = handoffBox()
     if (!sheet || !box) {
-      flash('Нечего копировать', true)
+      flash(tr('handoff.copyNothing'), true)
       return
     }
     const size = (box.r2 - box.r1 + 1) * (box.c2 - box.c1 + 1)
     if (size > EXPORT_CELL_LIMIT) {
-      flash(`Выделение слишком велико (${size} ячеек; максимум ${EXPORT_CELL_LIMIT}). Уменьшите выделение.`, true)
+      flash(tr('handoff.tooMany', { count: size, max: EXPORT_CELL_LIMIT }), true)
       return
     }
     const headerAllowance = String(sheet.name ?? '').length + handoffRange(box).length + 128
@@ -451,7 +457,7 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
       formulas: copyFormulas,
       maxChars: HANDOFF_COPY_CHAR_LIMIT - headerAllowance
     })) {
-      flash('Полный текст слишком велик для копирования. Уменьшите выделение; ничего не скопировано.', true)
+      flash(tr('handoff.copyTooBig'), true)
       return
     }
     const cells = handoffFormat === 'tsv'
@@ -461,14 +467,15 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
       sheetName: sheet.name,
       range: handoffRange(box),
       format: handoffFormat,
-      cells
+      cells,
+      locale
     })
     if (text === '') {
-      flash('Нечего копировать', true)
+      flash(tr('handoff.copyNothing'), true)
       return
     }
     const copied = copyText(text)
-    flash(copied ? 'Полный текст скопирован' : 'Не удалось скопировать', !copied)
+    flash(copied ? tr('handoff.copied') : tr('handoff.copyFailed'), !copied)
   }
 
   async function sendHandoff() {
@@ -476,7 +483,7 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
     const agent = handoffAgents.find((entry) => entry?.terminalId === handoffAgentId) ?? null
     const plan = handoffPlan()
     if (!agent) {
-      flash('Выберите агента', true)
+      flash(tr('handoff.chooseAgent'), true)
       return
     }
     if (plan.error) {
@@ -484,16 +491,16 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
       return
     }
     if (plan.oversized) {
-      flash(`Текст больше ${TEXT_LIMIT} символов — отправка отключена. Скопируйте полный текст вручную.`, true)
+      flash(tr('handoff.tooLong', { limit: TEXT_LIMIT }), true)
       return
     }
     if (plan.text === '') {
-      flash('Нечего передавать', true)
+      flash(tr('handoff.nothing'), true)
       return
     }
     if (handoffPreview.textContent !== plan.text) {
       renderHandoffPreview()
-      flash('Предпросмотр изменился. Проверьте его перед отправкой.', true)
+      flash(tr('handoff.previewChanged'), true)
       return
     }
     handoffSending = true
@@ -502,26 +509,21 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
       const result = await workerBridge.request('agent.send', {
         terminalId: agent.terminalId,
         text: plan.text,
-        enter: handoffEnter.checked === true
+        enter: handoffEnter.checked === true,
+        locale
       })
       if (result?.accepted === true) {
-        flash(`Передано в ${agentName(agent)}`)
+        flash(tr('handoff.sentTo', { name: agentName(agent) }))
         agentMenu.close()
         grid.focus?.()
       } else if (result?.unknown === true) {
-        flash(
-          `Результат неизвестен: ${result.reason || 'хост не подтвердил отправку'}. Проверьте терминал — автоматического повтора нет.`,
-          true
-        )
+        flash(tr('handoff.unknown', { reason: result.reason || tr('handoff.hostNoConfirm') }), true)
       } else {
-        flash(result?.reason || 'Агент не принял текст', true)
+        flash(result?.reason || tr('handoff.notAccepted'), true)
       }
     } catch (error) {
       // The bridge failed too; the call may still have reached the terminal, so do not claim failure.
-      flash(
-        `Результат неизвестен: ${describeError(error)}. Проверьте терминал — автоматического повтора нет.`,
-        true
-      )
+      flash(tr('handoff.unknownError', { error: describeError(error) }), true)
     } finally {
       handoffSending = false
       // The popup stays open so the person can check the terminal or retry deliberately.
@@ -547,9 +549,9 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
   window.document.addEventListener('pointerdown', onOutsidePointer)
   window.document.addEventListener('keydown', onMenuEscape)
 
-  const searchButton = el('button', 'wb-button', 'Найти')
+  const searchButton = el('button', 'wb-button', tr('search.open'))
   searchButton.type = 'button'
-  searchButton.setAttribute('aria-label', 'Поиск по книге (Ctrl+F)')
+  searchButton.setAttribute('aria-label', tr('search.label'))
   searchButton.setAttribute('aria-expanded', 'false')
   searchButton.setAttribute('aria-controls', 'wb-search-panel')
 
@@ -572,7 +574,7 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
   const formulaInput = el('input', 'wb-formula-input')
   formulaInput.type = 'text'
   formulaInput.spellcheck = false
-  formulaInput.setAttribute('aria-label', 'Cell contents')
+  formulaInput.setAttribute('aria-label', tr('formula.label'))
   const formulaKind = el('span', 'wb-formula-kind')
   formulaBar.append(address, formulaKind, formulaInput)
 
@@ -580,20 +582,20 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
   searchPanel.id = 'wb-search-panel'
   searchPanel.hidden = true
   searchPanel.setAttribute('role', 'search')
-  searchPanel.setAttribute('aria-label', 'Поиск по книге')
+  searchPanel.setAttribute('aria-label', tr('search.panelLabel'))
   const searchInput = el('input', 'wb-search-input')
   searchInput.type = 'search'
-  searchInput.placeholder = 'Значение или формула'
-  searchInput.setAttribute('aria-label', 'Найти значение или формулу в книге')
-  const searchRun = el('button', 'wb-button', 'Искать')
+  searchInput.placeholder = tr('search.placeholder')
+  searchInput.setAttribute('aria-label', tr('search.inputLabel'))
+  const searchRun = el('button', 'wb-button', tr('search.find'))
   searchRun.type = 'submit'
-  const searchPrevious = el('button', 'wb-button', 'Назад')
-  const searchNext = el('button', 'wb-button', 'Далее')
-  const searchMore = el('button', 'wb-button', 'Искать дальше')
-  const searchClose = el('button', 'wb-button', 'Закрыть')
+  const searchPrevious = el('button', 'wb-button', tr('search.previous'))
+  const searchNext = el('button', 'wb-button', tr('search.next'))
+  const searchMore = el('button', 'wb-button', tr('search.more'))
+  const searchClose = el('button', 'wb-button', tr('search.close'))
   for (const button of [searchPrevious, searchNext, searchMore, searchClose]) button.type = 'button'
-  searchPrevious.setAttribute('aria-label', 'Предыдущее совпадение на этой странице')
-  searchNext.setAttribute('aria-label', 'Следующее совпадение на этой странице')
+  searchPrevious.setAttribute('aria-label', tr('search.previousAria'))
+  searchNext.setAttribute('aria-label', tr('search.nextAria'))
   const searchStatus = el('span', 'wb-search-status')
   searchStatus.setAttribute('role', 'status')
   searchStatus.setAttribute('aria-live', 'polite')
@@ -608,12 +610,17 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
   status.append(statusAddress, statusStats, statusSheet)
 
   const notice = el('div', 'wb-notice')
+  const NOTE_KEYS = new Map([
+    ['Drawings were not rendered; the original drawing parts will be preserved on save.', 'note.drawings'],
+    ['Tables were not rendered; the original table parts will be preserved on save.', 'note.tables'],
+    ['Conditional formatting rules are preserved, but are not displayed.', 'note.conditional']
+  ])
   function renderNotice() {
     const notes = Array.isArray(model.notes) ? model.notes.filter(Boolean) : []
     notice.hidden = !readOnly && notes.length === 0
     notice.textContent = [
-      ...(readOnly ? ['Read-only: this file was opened without edit access, so changes are off.'] : []),
-      ...notes
+      ...(readOnly ? [tr('notice.readOnly')] : []),
+      ...notes.map((note) => (NOTE_KEYS.has(note) ? tr(NOTE_KEYS.get(note)) : note))
     ].join(' ')
   }
   renderNotice()
@@ -626,7 +633,7 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
   let blocked = false
   let flashTimer = null
 
-  const grid = createGrid(gridHost, { readOnly })
+  const grid = createGrid(gridHost, { readOnly, locale })
   let revision = 0
   let searchPage = null
   let searchPosition = -1
@@ -644,7 +651,7 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
     searchPage = null
     searchPosition = -1
     searchPageNumber = 0
-    updateSearchStatus(searchInput.value ? 'Данные изменились. Начните поиск заново.' : 'Введите запрос и нажмите Enter.')
+    updateSearchStatus(searchInput.value ? tr('search.changed') : tr('search.enterPrompt'))
   }
 
   function noteEdit() {
@@ -658,18 +665,20 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
     searchPageNumber = pageNumber
     if (result.reason) {
       const messages = {
-        'empty-query': 'Введите запрос.',
-        'query-too-long': 'Запрос слишком длинный (максимум 256 символов).',
-        'cursor-stale': 'Данные изменились. Начните поиск заново.',
-        'invalid-cursor': 'Продолжение недоступно. Начните поиск заново.',
-        'revision-required': 'Продолжение недоступно. Начните поиск заново.'
+        'empty-query': tr('search.empty'),
+        'query-too-long': tr('search.tooLong'),
+        'cursor-stale': tr('search.cursorStale'),
+        'invalid-cursor': tr('search.continueUnavailable'),
+        'revision-required': tr('search.continueUnavailable')
       }
       searchPage = null
-      updateSearchStatus(messages[result.reason] ?? 'Не удалось выполнить поиск.')
+      updateSearchStatus(messages[result.reason] ?? tr('search.failed'))
       return
     }
-    const suffix = result.truncated ? ' Поиск не завершён; нажмите «Искать дальше».' : ' Поиск завершён.'
-    updateSearchStatus(`Страница ${pageNumber}: совпадений ${result.matches.length}. Навигация только по этой странице.${suffix}`)
+    updateSearchStatus(tr(result.truncated ? 'search.pageOpen' : 'search.pageDone', {
+      page: pageNumber,
+      count: result.matches.length
+    }))
   }
 
   function runSearch() {
@@ -678,7 +687,7 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
       if (searchPage?.matches.length) navigateSearch(1)
     } catch (error) {
       searchPage = null
-      updateSearchStatus(`Ошибка поиска: ${describeError(error)}`)
+      updateSearchStatus(tr('search.error', { error: describeError(error) }))
     }
   }
 
@@ -692,24 +701,28 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
     const index = model.sheets.findIndex((sheet) => sheet.index === match.sheetIndex && sheet.name === match.sheetName)
     if (index < 0) {
       searchPage = null
-      updateSearchStatus('Лист изменился. Начните поиск заново.')
+      updateSearchStatus(tr('search.sheetChanged'))
       return
     }
     const sheet = model.sheets[index]
     if (sheet.hidden?.rows?.has(match.row) || sheet.hidden?.cols?.has(match.col) ||
         sheet.rowHeights?.get(match.row) === 0 || sheet.colWidths?.get(match.col) === 0) {
-      updateSearchStatus(`Совпадение ${match.sheetName}!${match.ref} находится в скрытой строке или столбце; переход невозможен. Используйте навигацию по странице.`)
+      updateSearchStatus(tr('search.hidden', { ref: `${match.sheetName}!${match.ref}` }))
       return
     }
     selectSheet(index)
     grid.setSelection({ r1: match.row, c1: match.col, r2: match.row, c2: match.col, r: match.row, c: match.col })
     const selected = grid.getSelection()
     if (selected.r !== match.row || selected.c !== match.col) {
-      updateSearchStatus(`Совпадение ${match.sheetName}!${match.ref} невозможно выбрать; сетка выбрала другую ячейку.`)
+      updateSearchStatus(tr('search.unselectable', { ref: `${match.sheetName}!${match.ref}` }))
       return
     }
-    const suffix = searchPage.truncated ? ' Поиск не завершён; доступно продолжение.' : ' Поиск завершён.'
-    updateSearchStatus(`Страница ${searchPageNumber}: ${searchPosition + 1} из ${matches.length}, ${match.sheetName}!${match.ref}. Навигация только по этой странице.${suffix}`)
+    updateSearchStatus(tr(searchPage.truncated ? 'search.navOpen' : 'search.navDone', {
+      page: searchPageNumber,
+      index: searchPosition + 1,
+      count: matches.length,
+      ref: `${match.sheetName}!${match.ref}`
+    }))
   }
 
   function openSearch() {
@@ -731,7 +744,7 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
   searchInput.addEventListener('input', () => {
     searchPage = null
     searchPosition = -1
-    updateSearchStatus('Нажмите Enter, чтобы начать поиск.')
+    updateSearchStatus(tr('search.enterPrompt'))
   })
   searchPanel.addEventListener('submit', (event) => {
     event.preventDefault()
@@ -756,10 +769,10 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
       if (searchPage?.matches.length) navigateSearch(1)
     } catch (error) {
       searchPage = null
-      updateSearchStatus(`Ошибка поиска: ${describeError(error)}`)
+      updateSearchStatus(tr('search.error', { error: describeError(error) }))
     }
   })
-  updateSearchStatus('Введите запрос и нажмите Enter.')
+  updateSearchStatus(tr('search.enterPrompt'))
 
   const sheetLabel = () => model.sheets[active.sheet]?.name ?? ''
 
@@ -812,8 +825,8 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
     const area = sel ? (sel.r2 - sel.r1 + 1) * (sel.c2 - sel.c1 + 1) : 0
     if (sheet && sel && area > MAX_SCAN) {
       // Statistics over a million cells cost more than a keystroke may spend; say so instead.
-      statusStats.textContent = `${area.toLocaleString('en-US')} cells selected`
-      statusSheet.textContent = `${sheetLabel()} · ${sheet.colCount} cols × ${sheet.rowCount} rows`
+      statusStats.textContent = tr('status.cellsSelected', { count: area.toLocaleString('en-US') })
+      statusSheet.textContent = tr('status.sheetStats', { sheet: sheetLabel(), cols: sheet.colCount, rows: sheet.rowCount })
       return
     }
     if (sheet && sel) {
@@ -838,12 +851,14 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
         }
       }
       if (count > 0) {
-        stats = `Count ${count}`
-        if (numeric > 1) stats += ` · Sum ${formatNumber(sum)} · Avg ${formatNumber(sum / numeric)}`
+        stats = tr('status.count', { count })
+        if (numeric > 1) {
+          stats += ` · ${tr('status.sumAvg', { sum: formatNumber(sum), avg: formatNumber(sum / numeric) })}`
+        }
       }
     }
     statusStats.textContent = stats
-    statusSheet.textContent = `${sheetLabel()} · ${sheet ? `${sheet.colCount} cols × ${sheet.rowCount} rows` : ''}`
+    statusSheet.textContent = `${sheetLabel()} · ${sheet ? tr('status.dimensions', { cols: sheet.colCount, rows: sheet.rowCount }) : ''}`
   }
 
   function renderState() {
@@ -856,7 +871,7 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
     undoButton.disabled = !state.canUndo || readOnly
     redoButton.disabled = !state.canRedo || readOnly
     if (stateLabel.classList.contains('is-error')) return
-    stateLabel.textContent = state.dirty ? 'Unsaved changes' : ''
+    stateLabel.textContent = state.dirty ? tr('status.unsaved') : ''
   }
 
   // A short toolbar note; the status bar below stays on the selection stats. An error stays longer
@@ -887,14 +902,14 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
     const sheet = model.sheets[active.sheet]
     if (!sheet) return
     const text = format(sheet, selectionBox(), { formulas: copyFormulas })
-    flash(copyText(text) ? 'Скопировано' : 'Не удалось скопировать')
+    flash(copyText(text) ? tr('flash.copied') : tr('flash.copyFailed'))
   }
 
   function copyFormattedSelection() {
     const sheet = model.sheets[active.sheet]
     const box = selectionBox()
     if (!sheet || !box) {
-      flash('Нечего копировать', true)
+      flash(tr('handoff.copyNothing'), true)
       return
     }
     const count = (box.r2 - box.r1 + 1) * (box.c2 - box.c1 + 1)
@@ -902,7 +917,7 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
       formulas: copyFormulas,
       maxChars: HANDOFF_COPY_CHAR_LIMIT
     })) {
-      flash('Выделение слишком велико для безопасного копирования. Уменьшите выделение; ничего не скопировано.', true)
+      flash(tr('handoff.copyTooBig'), true)
       return
     }
     let html = null
@@ -911,18 +926,20 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
       html = selectionToHtml(sheet, box, { formulas: copyFormulas })
     } catch (error) {
       if (!(error instanceof RangeError)) {
-        flash(`Не удалось скопировать: ${describeError(error)}`, true)
+        flash(tr('error.copy', { error: describeError(error) }), true)
         return
       }
       reason = describeError(error)
     }
     const text = selectionToTsv(sheet, box, { formulas: copyFormulas })
     if (html !== null && copyHtml(html, text)) {
-      flash('Скопировано с форматированием')
+      flash(tr('flash.copiedFormatted'))
     } else {
       const copied = copyText(text)
       const detail = reason ? ` (${reason})` : ''
-      flash(copied ? `Форматирование недоступно${detail}; скопирован обычный текст` : 'Не удалось скопировать ни форматированный, ни обычный текст', true)
+      flash(copied
+        ? tr('flash.formattedFallback', { detail })
+        : tr('flash.copyBothFailed'), true)
     }
   }
 
@@ -931,12 +948,12 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
     const sheet = model.sheets[active.sheet]
     if (!sheet) return
     if (sheet.rowCount * sheet.colCount > EXPORT_CELL_LIMIT) {
-      flash(`This sheet is too large to export (${sheet.rowCount} × ${sheet.colCount})`, true)
+      flash(tr('error.sheetTooLarge', { rows: sheet.rowCount, cols: sheet.colCount }), true)
       return
     }
     const files = globalThis.orca?.files
     if (typeof files?.saveAs !== 'function') {
-      flash('Экспорт недоступен')
+      flash(tr('error.exportUnavailable'))
       return
     }
     const box = { r1: 0, c1: 0, r2: Math.max(0, sheet.rowCount - 1), c2: Math.max(0, sheet.colCount - 1) }
@@ -947,7 +964,7 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
     const name = String(sheet.name || 'sheet').replace(/[\\/:*?"<>|]+/g, '_')
     const done = (result) => {
       if (result && result.status === 'cancelled') return
-      flash('Экспортировано')
+      flash(tr('flash.exported'))
     }
     try {
       const pending = files.saveAs({
@@ -956,12 +973,12 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
         data
       })
       if (pending && typeof pending.then === 'function') {
-        pending.then(done, () => flash('Экспорт не выполнен'))
+        pending.then(done, () => flash(tr('error.exportFailed')))
       } else {
         done(pending)
       }
     } catch {
-      flash('Экспорт не выполнен')
+      flash(tr('error.exportFailed'))
     }
   }
 
@@ -1017,7 +1034,7 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
       setDateSystem(next.date1904)
       adoptModel(next, { resetStale: false })
     } catch (error) {
-      flash(`Не удалось перечитать книгу: ${describeError(error)}`, true)
+      flash(tr('error.reloadFailed', { error: describeError(error) }), true)
     }
   }
 
@@ -1030,11 +1047,11 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
     const count = (axis === 'row' ? Math.abs(selection.r2 - selection.r1) : Math.abs(selection.c2 - selection.c1)) + 1
     const result = commitStructural(docApi, { sheet: sheetLabel(), axis, action, index, count })
     if (!result.ok) {
-      flash(`Не удалось изменить структуру: ${result.reason}`, true)
+      flash(tr('error.structureFailed', { reason: result.reason }), true)
       return
     }
     await reloadStaged()
-    flash(action === 'insert' ? 'Вставлено' : 'Удалено')
+    flash(tr(action === 'insert' ? 'flash.inserted' : 'flash.deleted'))
   }
 
   /** Whether the cell is a merged block's non-anchor, which spreadsheets do not let you edit. */
@@ -1053,13 +1070,13 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
   function writeCell(sheetIndex, ref, after) {
     if (blocked) return false
     if (inMergedBlock(sheetIndex, ref)) {
-      flash(`Cannot change ${ref}: it is inside a merged range`, true)
+      flash(tr('error.merged', { ref }), true)
       return false
     }
     const before = cellAt(sheetIndex, ref)?.value ?? { kind: 'blank', value: null, display: '', formula: null }
     const result = commitEdit(docApi, { type: 'cell', sheet: model.sheets[sheetIndex].name, ref, before, after })
     if (!result.ok) {
-      flash(`Cannot change ${ref}: ${result.reason}`, true)
+      flash(tr('error.change', { ref, reason: result.reason }), true)
       return false
     }
     const sheet = model.sheets[sheetIndex]
@@ -1127,7 +1144,7 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
     if (!result.ok) {
       // The writer refused this cell (a merged range, a protected sheet, a value it cannot
       // express). Say so instead of leaving the grid showing a value that will never be saved.
-      flash(`Cannot change ${ref}: ${result.reason}`, true)
+      flash(tr('error.change', { ref, reason: result.reason }), true)
       renderFormula()
       return
     }
@@ -1322,7 +1339,7 @@ export function mountApp({ root, document: docApi, model, readOnly }) {
     },
     onDiscarded() {
       invalidateSearch()
-      flash('The file changed on disk; the outside version is shown', true)
+      flash(tr('flash.outsideChanged'), true)
       handoffCache = null
       renderTabs()
       renderFormula()

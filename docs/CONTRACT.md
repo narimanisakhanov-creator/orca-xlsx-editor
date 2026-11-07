@@ -13,7 +13,7 @@ No network, no `eval` / `new Function`, no external requests. Everything is rela
 | `src/write/zip.js`, `src/write/zip-budget.js` | slice B |
 | `src/write/xml.js`, `src/write/xlsx-writer.js`, `src/write/structural.js`, `src/write/structural-formula.js`, `src/write/structural-objects.js` | slice C |
 | `src/model/workbook.js`, `src/model/numfmt.js`, `src/model/style.js`, `src/model/search.js` | slice D |
-| `src/ui/grid.js`, `src/ui/app.js`, `src/ui/clipboard.js`, `src/ui/*.css` | slice E |
+| `src/ui/grid.js`, `src/ui/app.js`, `src/ui/clipboard.js`, `src/ui/*.css`, `src/i18n.js` | slice E |
 | `src/edit/edits.js` | slice F |
 | `src/main.js` | integration |
 
@@ -231,6 +231,11 @@ search through `src/model/search.js`, and row/column insertion and deletion thro
 undo/redo and model replacement increments it, so a continuation can never replay an old value.
 `grid.setFormulaResultsStale(boolean)` is set after successful edits and history moves; the grid
 never claims a formula was recalculated.
+
+`src/i18n.js` owns every user-facing string. `resolveLocale(globalThis.orca.locale)` returns `ru`
+for a `ru`/`ru-*` tag and `en` otherwise; the frame passes that locale to the grid and to each
+`agent.send` request, so the worker's refusals and the hand-off header follow the same language.
+Both dictionaries must keep the same keys; `test/i18n.spec.mjs` checks that and the locale fallback.
 
 A structural commit returns the bytes of the staged package; the app reloads the whole model from
 `currentDocumentBytes()` instead of patching the grid. A refusal leaves the model, history and file

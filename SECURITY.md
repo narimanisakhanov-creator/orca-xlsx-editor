@@ -34,7 +34,8 @@ Both are used only from `worker/main.js`, only inside its two panel handlers, an
 
 ## What the hand-off sends
 
-`agent.send` takes `{ terminalId, text, enter? }`. It is refused before any host call when the
+`agent.send` takes `{ terminalId, text, enter?, locale? }`. `locale` only selects the language of
+refusals; it is not part of the message. It is refused before any host call when the
 `terminalId` is empty or too long, `text` is missing or empty, `enter` is not a boolean, or `text`
 is longer than 4096 characters. That limit is Orca's on `terminal.sendText`; the hand-off is never
 split or truncated, because Orca offers no atomicity or idempotency across calls. For text over the
