@@ -1,8 +1,8 @@
 /**
  * Edit log for the workbook: cell operations, undo/redo and the save delta.
  *
- * Pure ESM. No DOM, no Orca API. Every operation writes exactly one cell, so the
- * writer (src/write/xlsx-writer.js) can rebuild the bytes from the log.
+ * Pure ESM. No DOM, no Orca API. Structural transactions retain package snapshots
+ * so deletion can be undone without reconstructing lost cells or metadata.
  *
  * @typedef {{ kind: 'number' | 'text' | 'boolean' | 'date' | 'error' | 'blank',
  *   value: unknown, display: string, formula: string | null }} CellValue
@@ -142,6 +142,17 @@ function assertCellValue(value, label) {
 
 function normalizeOp(op) {
   if (!op || typeof op !== 'object') throw new TypeError('apply: op must be an object')
+  if (op.type === 'structural') {
+    if (typeof op.sheet !== 'string' || !op.sheet ||
+        !['row', 'column'].includes(op.axis) || !['insert', 'delete'].includes(op.action) ||
+        !Number.isInteger(op.index) || !Number.isInteger(op.count) ||
+        op.index < 1 || op.count < 1 ||
+        op.index + op.count - 1 > (op.axis === 'row' ? EXCEL_MAX_ROW + 1 : EXCEL_MAX_COL + 1) ||
+        !Array.isArray(op.beforeEntries) || !Array.isArray(op.afterEntries)) {
+      throw new TypeError('apply: invalid structural transaction')
+    }
+    return { ...op }
+  }
   if (op.type !== 'cell') throw new TypeError(`apply: unsupported op type: ${String(op.type)}`)
   if (typeof op.sheet !== 'string' || op.sheet === '') {
     throw new TypeError('apply: op.sheet must be a non-empty string')
@@ -228,16 +239,16 @@ export function createEditLog(options = {}) {
 
   function apply(op) {
     const next = normalizeOp(op)
-    if (equals(next.before, next.after)) return null
+    if (next.type === 'cell' && equals(next.before, next.after)) return null
 
     redoStack.length = 0
     const at = now()
-    const key = cellKey(next)
+    const key = next.type === 'cell' ? cellKey(next) : null
     const last = log.length > 0 ? log[log.length - 1] : null
 
     // A save closes the batch: the value at the mark is already in the file, so the
     // next keystroke must start a new operation even inside the time window.
-    if (coalesce && chainOpen && last && last.key === key && at - last.at <= coalesceWindowMs) {
+    if (next.type === 'cell' && coalesce && chainOpen && last && last.key === key && at - last.at <= coalesceWindowMs) {
       // Fast typing in one cell: keep the first `before`, take the newest `after`.
       const merged = {
         type: 'cell',
@@ -263,7 +274,7 @@ export function createEditLog(options = {}) {
     log.push(record)
     undoStack.push(record)
     trimUndo()
-    chainOpen = true
+    chainOpen = next.type === 'cell'
     return next
   }
 
@@ -292,13 +303,15 @@ export function createEditLog(options = {}) {
         seq: ++seq,
         at: now(),
         key: record.key,
-        op: {
-          type: 'cell',
-          sheet: record.op.sheet,
-          ref: record.op.ref,
-          before: record.op.after,
-          after: record.op.before
-        }
+        op: record.op.type === 'structural'
+          ? { type: 'restore', entries: record.op.beforeEntries }
+          : {
+              type: 'cell',
+              sheet: record.op.sheet,
+              ref: record.op.ref,
+              before: record.op.after,
+              after: record.op.before
+            }
       })
     }
 
@@ -313,10 +326,9 @@ export function createEditLog(options = {}) {
     redoStack.pop()
 
     // A fresh seq keeps the re-applied op inside every mark taken before it.
-    record.seq = ++seq
-    record.at = now()
-    log.push(record)
-    undoStack.push(record)
+    const replay = { ...record, seq: ++seq, at: now() }
+    log.push(replay)
+    undoStack.push(replay)
     trimUndo()
     chainOpen = false
     return record.op
@@ -342,25 +354,28 @@ export function createEditLog(options = {}) {
    */
   function opsSince(mark) {
     const since = markSeq(mark)
-    /** @type {Map<string, { first: any, last: any }>} */
+    const out = []
     const touched = new Map()
+    function flush() {
+      for (const { first, last } of touched.values()) {
+        if (equals(first.before, last.after)) continue
+        out.push({ type: 'cell', sheet: last.sheet, ref: last.ref, before: first.before, after: last.after })
+      }
+      touched.clear()
+    }
     for (const record of log) {
       if (record.seq <= since) continue
-      const seen = touched.get(record.key)
-      if (seen) seen.last = record
-      else touched.set(record.key, { first: record, last: record })
+      const op = record.op
+      if (op.type !== 'cell') {
+        flush()
+        out.push(op)
+      } else {
+        const seen = touched.get(record.key)
+        if (seen) seen.last = op
+        else touched.set(record.key, { first: op, last: op })
+      }
     }
-    const out = []
-    for (const { first, last } of touched.values()) {
-      if (equals(first.op.before, last.op.after)) continue
-      out.push({
-        type: 'cell',
-        sheet: last.op.sheet,
-        ref: last.op.ref,
-        before: first.op.before,
-        after: last.op.after
-      })
-    }
+    flush()
     return out
   }
 
@@ -373,6 +388,23 @@ export function createEditLog(options = {}) {
     savedSeq = seq
     chainOpen = false
     return Object.freeze({ seq })
+  }
+
+  // Restore the entire history if the host rejects a change synchronously.
+  function checkpoint() {
+    const copies = new Map()
+    const copy = (record) => {
+      if (!copies.has(record)) copies.set(record, { ...record })
+      return copies.get(record)
+    }
+    return {
+      seq, savedSeq, dropped, chainOpen,
+      log: log.map(copy), undoStack: undoStack.map(copy), redoStack: redoStack.map(copy)
+    }
+  }
+
+  function restore(state) {
+    ;({ seq, savedSeq, dropped, chainOpen, log, undoStack, redoStack } = state)
   }
 
   function clear() {
@@ -392,6 +424,10 @@ export function createEditLog(options = {}) {
     opsSince,
     markSaved,
     clear,
+    checkpoint,
+    restore,
+    peekUndo: () => undoStack.at(-1)?.op ?? null,
+    peekRedo: () => redoStack.at(-1)?.op ?? null,
     get canUndo() {
       return undoStack.length > 0
     },

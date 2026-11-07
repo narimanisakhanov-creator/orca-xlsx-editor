@@ -5,6 +5,7 @@ const ROW_HEADER_WIDTH = 48
 const OVERSCAN = 8
 /** Longest text a single cell paints; the model keeps the rest. */
 const MAX_CELL_TEXT = 2000
+let nextGridId = 0
 
 /**
  * Render a SheetModel into a small, scrollable Excel-like surface.
@@ -35,15 +36,23 @@ export function createGrid(container, options = {}) {
   let renderHandle = 0
   let destroyed = false
   let resizeObserver = null
+  let activeProxy = null
+  let formulaResultsStale = false
 
   const root = document.createElement('div')
   root.className = 'orca-grid'
-  root.setAttribute('role', 'grid')
-  root.setAttribute('aria-label', 'Worksheet')
+  const gridId = `orca-grid-${++nextGridId}`
+  const staleNotice = document.createElement('div')
+  staleNotice.className = 'orca-grid-stale-notice'
+  staleNotice.setAttribute('role', 'status')
+  staleNotice.setAttribute('aria-live', 'polite')
+  staleNotice.setAttribute('aria-atomic', 'true')
+  staleNotice.tabIndex = 0
 
   const viewport = document.createElement('div')
   viewport.className = 'orca-grid-viewport'
   viewport.tabIndex = 0
+  viewport.setAttribute('role', 'grid')
   viewport.setAttribute('aria-label', 'Worksheet grid')
 
   const canvas = document.createElement('div')
@@ -76,7 +85,8 @@ export function createGrid(container, options = {}) {
     cornerLayer
   )
   viewport.append(canvas)
-  root.append(viewport)
+  staleNotice.hidden = true
+  root.append(staleNotice, viewport)
   container.replaceChildren(root)
 
   const layers = {
@@ -109,6 +119,28 @@ export function createGrid(container, options = {}) {
     if (!handlers) return
     for (const fn of handlers) fn(payload)
   }
+  /**
+   * Mark every formula cell as potentially out of date and show the calculation notice.
+   * Callers own this state: set it after accepted edits and clear it when appropriate for the
+   * workbook. Changing the model or sheet does not reset it. The grid never recalculates formulas
+   * or assumes a cached result exists.
+   */
+  function setFormulaResultsStale(stale) {
+    const next = Boolean(stale)
+    if (destroyed || next === formulaResultsStale) return
+    formulaResultsStale = next
+    staleNotice.hidden = !next
+    root.classList.toggle('has-formula-stale', next)
+    staleNotice.textContent = next
+      ? 'Formula cells may show values that are out of date after edits. This editor does not recalculate formulas.'
+      : ''
+    scrollCellIntoView(selection.r, selection.c)
+    scheduleRender()
+  }
+
+  function getFormulaResultsStale() {
+    return formulaResultsStale
+  }
 
   function setModel(nextModel) {
     model = nextModel ?? null
@@ -132,7 +164,8 @@ export function createGrid(container, options = {}) {
 
   function setSheetData(nextSheet) {
     sheet = nextSheet
-    root.setAttribute('aria-label', sheet?.name ? `Worksheet ${sheet.name}` : 'Worksheet grid')
+    viewport.removeAttribute('aria-activedescendant')
+    viewport.setAttribute('aria-label', sheet?.name ? `Worksheet ${sheet.name}` : 'Worksheet grid')
     rowSizes = []
     colSizes = []
     rowOffsets = [0]
@@ -140,6 +173,10 @@ export function createGrid(container, options = {}) {
     merges = []
     mergeOrigins = new Map()
     if (!sheet) {
+      activeProxy?.remove()
+      activeProxy = null
+      viewport.removeAttribute('aria-rowcount')
+      viewport.removeAttribute('aria-colcount')
       totalRows = 0
       totalCols = 0
       canvas.style.width = `${ROW_HEADER_WIDTH}px`
@@ -168,8 +205,8 @@ export function createGrid(container, options = {}) {
     merges = Array.isArray(sheet.merges) ? sheet.merges.map(normalizeMerge).filter(Boolean) : []
     for (const merge of merges) mergeOrigins.set(`${merge.r1},${merge.c1}`, merge)
 
-    root.setAttribute('aria-rowcount', String(totalRows))
-    root.setAttribute('aria-colcount', String(totalCols))
+    viewport.setAttribute('aria-rowcount', String(totalRows))
+    viewport.setAttribute('aria-colcount', String(totalCols))
     canvas.style.width = `${Math.max(ROW_HEADER_WIDTH, ROW_HEADER_WIDTH + colOffsets[totalCols])}px`
     canvas.style.height = `${Math.max(HEADER_HEIGHT, HEADER_HEIGHT + rowOffsets[totalRows])}px`
     selection = clampSelection(selection)
@@ -216,6 +253,7 @@ export function createGrid(container, options = {}) {
     selection = next
     if (options.anchor !== false) selectionAnchor = { r: next.r, c: next.c }
     address.textContent = formatSelectionAddress()
+    viewport.removeAttribute('aria-activedescendant')
     scheduleRender()
     scrollCellIntoView(selection.r, selection.c)
     if (options.emit !== false) emit('selection', { selection: { ...selection } })
@@ -271,12 +309,16 @@ export function createGrid(container, options = {}) {
     const merge = mergeForCell(position.r, position.c)
     const origin = merge ? { r: merge.r1, c: merge.c1 } : position
     const selector = `.orca-grid-cell[data-row="${origin.r}"][data-col="${origin.c}"]`
-    const current = [...root.querySelectorAll(selector)]
-    if (!current.length) return
+    const current = [...canvas.querySelectorAll(selector)]
+    if (!current.length) {
+      if (origin.r === selection.r && origin.c === selection.c) updateActiveDescendant()
+      return
+    }
     for (const oldCell of current) {
       const nextCell = createCell(origin.r, origin.c, merge)
       if (nextCell) oldCell.replaceWith(nextCell)
     }
+    updateActiveDescendant()
   }
 
   function moveSelection(direction) {
@@ -334,8 +376,9 @@ export function createGrid(container, options = {}) {
       clearLayers()
       return
     }
-    root.setAttribute('aria-rowcount', String(totalRows))
-    root.setAttribute('aria-colcount', String(totalCols))
+    viewport.removeAttribute('aria-activedescendant')
+    viewport.setAttribute('aria-rowcount', String(totalRows))
+    viewport.setAttribute('aria-colcount', String(totalCols))
     canvas.style.width = `${Math.max(ROW_HEADER_WIDTH, ROW_HEADER_WIDTH + colOffsets[totalCols])}px`
     canvas.style.height = `${Math.max(HEADER_HEIGHT, HEADER_HEIGHT + rowOffsets[totalRows])}px`
     const viewportWidth = Math.max(1, viewport.clientWidth || 900)
@@ -375,12 +418,33 @@ export function createGrid(container, options = {}) {
     renderGroup(freezeLeftLayer, rowRange, frozenColRange, regularRows, frozenCols, 'left', freezeRows, freezeCols)
     renderGroup(freezeCornerLayer, frozenRowRange, frozenColRange, frozenRows, frozenCols, 'corner', freezeRows, freezeCols)
     renderHeaders(regularRows, regularCols, frozenRows, frozenCols)
+    updateActiveDescendant()
     root.style.setProperty('--grid-frozen-height', `${frozenHeight}px`)
     root.style.setProperty('--grid-frozen-width', `${frozenWidth}px`)
     root.classList.toggle('has-frozen-rows', frozenHeight > 0)
     root.classList.toggle('has-frozen-cols', frozenWidth > 0)
     address.textContent = formatSelectionAddress()
     canvas.style.minWidth = `${ROW_HEADER_WIDTH + colOffsets[totalCols]}px`
+  }
+
+  function updateActiveDescendant() {
+    activeProxy?.remove()
+    activeProxy = null
+    let active = canvas.querySelector('.orca-grid-cell.is-active')
+    if (!active && sheet && totalRows && totalCols) {
+      active = createCell(selection.r, selection.c, mergeForCell(selection.r, selection.c))
+      if (active) {
+        active.classList.add('orca-grid-active-proxy')
+        viewport.append(active)
+        activeProxy = active
+      }
+    }
+    if (!active) {
+      viewport.removeAttribute('aria-activedescendant')
+      return
+    }
+    active.id = `${gridId}-cell-${active.dataset.row}-${active.dataset.col}`
+    viewport.setAttribute('aria-activedescendant', active.id)
   }
 
   function setupLayer(layer, left, top, width, height, zIndex) {
@@ -492,6 +556,8 @@ export function createGrid(container, options = {}) {
     const selected = selection.r1 <= lastRow && selection.r2 >= r && selection.c1 <= lastCol && selection.c2 >= c
     if (selected) cell.classList.add('is-selected')
     if (selection.r >= r && selection.r <= lastRow && selection.c >= c && selection.c <= lastCol) cell.classList.add('is-active')
+    const staleFormula = formulaResultsStale && hasFormula(view?.value)
+    if (staleFormula) cell.classList.add('is-formula-stale')
     if (view?.value?.kind === 'error') cell.classList.add('is-error')
     cell.dataset.row = String(r)
     cell.dataset.col = String(c)
@@ -514,6 +580,10 @@ export function createGrid(container, options = {}) {
     cell.setAttribute('aria-colindex', String(c + 1))
     cell.setAttribute('aria-selected', selected ? 'true' : 'false')
     cell.setAttribute('aria-label', `${formatRef(r, c)}${cell.textContent ? ` ${cell.textContent}` : ''}`)
+    if (staleFormula) {
+      cell.setAttribute('aria-label', `${cell.getAttribute('aria-label')}. Formula result may be out of date; this editor does not recalculate formulas.`)
+      cell.title = 'Formula result may be out of date; this editor does not recalculate formulas.'
+    }
     return cell
   }
 
@@ -841,7 +911,10 @@ export function createGrid(container, options = {}) {
   viewport.addEventListener('pointercancel', handlePointerUp)
   viewport.addEventListener('dblclick', handleDoubleClick)
   if (typeof ResizeObserver === 'function') {
-    resizeObserver = new ResizeObserver(() => scheduleRender())
+    resizeObserver = new ResizeObserver(() => {
+      scrollCellIntoView(selection.r, selection.c)
+      scheduleRender()
+    })
     resizeObserver.observe(viewport)
   }
 
@@ -856,8 +929,14 @@ export function createGrid(container, options = {}) {
     moveSelection,
     focus,
     on,
+    setFormulaResultsStale,
+    getFormulaResultsStale,
     destroy
   }
+}
+
+function hasFormula(value) {
+  return Boolean(value?.formula)
 }
 
 function columnName(index) {

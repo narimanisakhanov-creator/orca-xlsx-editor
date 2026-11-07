@@ -11,8 +11,8 @@ No network, no `eval` / `new Function`, no external requests. Everything is rela
 | --- | --- |
 | `build/build.mjs`, `package.json`, `editor/index.html`, `editor/boot.js`, `editor/page.css` | slice A |
 | `src/write/zip.js`, `src/write/zip-budget.js` | slice B |
-| `src/write/xml.js`, `src/write/xlsx-writer.js` | slice C |
-| `src/model/workbook.js`, `src/model/numfmt.js`, `src/model/style.js` | slice D |
+| `src/write/xml.js`, `src/write/xlsx-writer.js`, `src/write/structural.js`, `src/write/structural-formula.js`, `src/write/structural-objects.js` | slice C |
+| `src/model/workbook.js`, `src/model/numfmt.js`, `src/model/style.js`, `src/model/search.js` | slice D |
 | `src/ui/grid.js`, `src/ui/app.js`, `src/ui/clipboard.js`, `src/ui/*.css` | slice E |
 | `src/edit/edits.js` | slice F |
 | `src/main.js` | integration |
@@ -174,20 +174,39 @@ Behaviour:
  *   freeze: { rows: number, cols: number },
  *   hidden: { rows: Set<number>, cols: Set<number> } }} SheetModel */
 
-/** @typedef {{ sheets: SheetModel[], active: number }} WorkbookModel */
+/** @typedef {{ sheets: SheetModel[], active: number, date1904: boolean,
+ *   notes: string[] }} WorkbookModel */
 
 export async function loadWorkbook(bytes)         // -> WorkbookModel
 export function normalizeAbsoluteTargets(bytes)   // -> Uint8Array | null
 ```
 
-`normalizeAbsoluteTargets` exists because ExcelJS 4.4.0 crashes on a worksheet relationship whose
-`Target` is an absolute OPC path (`/xl/tables/table1.xml`), which real writers produce. It rewrites
-those targets to paths relative to the sheet and returns a rebuilt archive, or `null` when the file
-needs no change; `loadWorkbook` reads the copy and never mutates the caller's bytes.
+`loadWorkbook` parses a **reader-only copy** built in memory: XML namespace prefixes and their
+declarations are stripped from `xl/workbook.xml` and worksheet XML (comment bodies are protected),
+`xl/drawings/*` except `.vml` and `xl/tables/*` are removed from the archive copy, `<drawing>` and
+`<tableParts>` references are removed from worksheet XML, and worksheet relationship targets are
+normalized to paths relative to the sheet (absolute targets and `.`/`..` segments included). The
+copy exists only for ExcelJS. `src/ui/document.js` keeps the accepted bytes' own ZIP entries, so a
+normalized archive is never the base of a save.
+
+An archive that cannot be read fails with `workbook archive cannot be read safely (<status>)`.
+`loadWorkbook` also compares ExcelJS's worksheet count with the `<sheet>` entries in
+`xl/workbook.xml` and throws when they differ, so a partially loaded workbook never looks complete.
+
+`normalizeAbsoluteTargets` is the exported relationship-only helper (absolute and dot-segment
+`Target` values → sheet-relative paths) used by the model tests; `loadWorkbook` does not route
+through it.
 
 `WorkbookModel` also carries `date1904: boolean` — the file's date epoch. `formatValue` takes it as
 an optional fourth argument (`formatValue(value, numFmt, isDate, date1904)`), and
 `src/ui/document.js` uses it to write a `Date` back as the serial number the file expects.
+
+`notes` is what the read had to leave out or approximate, de-duplicated across sheets: the
+conditional-formatting sentence (`Conditional formatting rules are preserved, but are not
+displayed.`) and unresolved style values (theme or indexed colours left unset, a non-solid pattern
+fill drawn solid). `src/ui/app.js` renders `model.notes` in the notice above the grid, next to the
+read-only warning. A workbook ExcelJS still cannot parse fails with Orca's error, so a warning is
+not a claim that every workbook opens.
 
 - Pure: no DOM. Runs under `node --test`.
 - Styles resolve to CSS-ready values: `fill` is a hex string like `#1F4E79` or `null`;
@@ -205,18 +224,40 @@ an optional fourth argument (`formatValue(value, numFmt, isDate, date1904)`), an
 `grid.js` exports a class or factory that renders a `SheetModel` into a container with
 virtualisation, sticky headers honouring `freeze`, selection and keyboard navigation. No Orca API
 inside `grid.js`; `app.js` owns the chrome and calls into the session it was handed. `app.js` also
-wires the two toolbar menus — copy (TSV, Markdown, CSV, "формулы как текст") through
-`clipboard.js`, export of the whole sheet as CSV or Markdown through `orca.files.saveAs`.
+wires the toolbar: copy (TSV, CSV, Markdown, formatted HTML, "формулы как текст") through
+`clipboard.js`, export of the whole sheet as CSV or Markdown through `orca.files.saveAs`, workbook
+search through `src/model/search.js`, and row/column insertion and deletion through
+`commitStructural`. Search cursors carry a monotonic `revision`; every accepted edit, paste,
+undo/redo and model replacement increments it, so a continuation can never replay an old value.
+`grid.setFormulaResultsStale(boolean)` is set after successful edits and history moves; the grid
+never claims a formula was recalculated.
+
+A structural commit returns the bytes of the staged package; the app reloads the whole model from
+`currentDocumentBytes()` instead of patching the grid. A refusal leaves the model, history and file
+untouched and is shown as a message.
 
 ## 7. `src/edit/edits.js` — operations and undo
 
 ```js
 export function createEditLog(options?)   // -> { apply(op), undo(), redo(), ops(), opsSince(mark),
-                                          //      markSaved(), clear(), canUndo, canRedo, undoSize, dropped }
+                                          //      markSaved(), clear(), checkpoint(), restore(),
+                                          //      canUndo, canRedo, undoSize, dropped }
 ```
 
-Ops are `{ type: 'cell', sheet, ref, before: CellValue, after: CellValue }` with inverses kept for
-undo. No DOM, no Orca API.
+Cell ops are `{ type: 'cell', sheet, ref, before: CellValue, after: CellValue }` with inverses kept
+for undo. Structural ops are `{ type: 'structural', sheet, axis: 'row'|'column',
+action: 'insert'|'delete', index, count, beforeEntries, afterEntries }`: the two entry arrays are
+the package snapshots before and after the whole transaction, because a structural edit changes
+addresses, formulas and related OOXML beyond one cell. Undo of a structural record appends
+`{ type: 'restore', entries: beforeEntries }` (or `afterEntries` on redo) so the file can be
+returned to either snapshot even after the host accepted a save. No DOM, no Orca API.
+
+`commitStructural(doc, operation)` in `document.js` preflights the complete staged package with
+`applyStructural` before recording anything: a refusal changes neither the log nor the bytes. While
+a save is pending or the document is read-only, structural commits are refused. An outside
+replacement clears the history and its snapshots. `currentDocumentBytes()` returns the staged ZIP,
+which the UI reloads after a structural commit or history move; the model cannot be patched
+cell-by-cell when addresses and related objects moved.
 
 Settled behaviour: `apply` returns `null` for a no-op (`after` equals `before`) and clears redo
 otherwise; consecutive edits in one cell coalesce inside `coalesceWindowMs` (600) so one Ctrl+Z
@@ -240,12 +281,36 @@ frame cannot hold:
 ```js
 export default function activate(orca)         // required; a named export is never called
 orca.panels.handle('agent.list', handler)      // -> { agents: Agent[] }, already ranked
-orca.panels.handle('agent.send', handler)      // { terminalId, text, enter? } -> { accepted, sent, truncated, reason? }
+orca.panels.handle('agent.send', handler)      // { terminalId, text, enter? }
+                                               // -> { accepted, sent, unknown, reason? }
 ```
 
-`worker/handoff.js` holds the pure part — `buildHandoff`, `truncateText` (the host refuses a
-`terminal.sendText` over 4096 characters), `rankAgents`, `readSend` — so the frame can build the
-same text it will send and both sides can be tested without Orca. The frame calls the handlers with
+`worker/handoff.js` holds the pure part — `buildHandoff` (the context header plus a Markdown or
+fenced TSV body; a TSV fence is at least three backticks and one longer than any run at the start
+of a body line), `fitHandoffRows` (leading row costs against a character budget), `rankAgents`,
+`readSend`, and `TEXT_LIMIT` 4096 — so the frame and the worker share the framing and validation
+without Orca.
+
+`readSend` validates before any host call: a non-empty `terminalId` (at most 1024 characters), a
+non-empty `text`, and a boolean `enter` when present. `agent.send` then refuses text longer than
+`TEXT_LIMIT` without calling the host. The hand-off is never split or truncated: Orca offers no
+atomicity or idempotency across calls. For text over the message limit the frame disables sending
+and offers a button to copy the full hand-off for manual pasting. The frame separately limits the
+selection to 200,000 cells: beyond that it refuses both sending and copying. Before materializing a
+copy, `selectionFitsTextBudget` conservatively estimates its size against 8 × 1024 × 1024 UTF-16
+code units, reserving the sheet name length, range length and 128 units for the header. This bound
+can reject a smaller actual output; exceeding either copy limit copies nothing and asks the person
+to reduce the selection. One send per terminal is allowed at a time; a second request for the same
+terminal while the first is in flight is refused.
+
+A valid request makes exactly one `terminal.sendText` call with `enter: true` only when the person
+asked for it. `sent` is that one message. On acceptance the answer is
+`{ accepted: true, sent, unknown: false }`; a non-accepting host result is
+`{ accepted: false, sent, unknown: false, reason }`. A thrown host call returns
+`{ accepted: false, sent, unknown, reason }`: `unknown` is false only for codes that prove the host
+refused before typing (`invalid_request`, `invalid_params`, `unknown_method`, `capability_denied`,
+`consent_required`, `not_permitted`, `rate_limited`, `too_large`), and true otherwise — a timeout
+may already have typed the text. The worker never retries. The frame calls the handlers with
 `orca.plugin.request`; nothing is sent without a press.
 
 ## 9. `src/ui/clipboard.js` — clipboard and export text
@@ -254,14 +319,21 @@ same text it will send and both sides can be tested without Orca. The frame call
 export function selectionToTsv(sheet, selection, { formulas = false })       // -> string
 export function selectionToCsv(sheet, selection, { formulas = false })       // -> string, RFC 4180, CRLF
 export function selectionToMarkdown(sheet, selection, { formulas = false })  // -> string, GFM table
+export function selectionToHtml(sheet, selection, { formulas = false, maxBytes }) // -> string
 export function copyText(text, target = globalThis.document)                 // -> boolean
+export function copyHtml(html, text, target = globalThis.document)            // -> boolean
 ```
 
-`selection` is `{ r1, c1, r2, c2 }`, 0-based and inclusive. The three formatters are pure — no DOM,
+`selection` is `{ r1, c1, r2, c2 }`, 0-based and inclusive. The formatters are pure — no DOM,
 no Orca API — so `node --test` runs them directly; they copy the display text, or `=FORMULA` when
-`formulas` is set. `copyText` is the file's only DOM-facing function: the isolated frame has no
-`navigator.clipboard`, so it selects a hidden textarea and runs the legacy `copy` command, then
-removes the node and restores focus. It returns whether the copy happened.
+`formulas` is set. Text that looks like a formula but is not one is defused in every text format.
+`selectionToHtml` emits an escaped HTML table with inline font, fill, alignment and border styles,
+`rowspan`/`colspan` for merged cells, and refuses (throws `RangeError`) above 250,000 cells, above
+8 MiB of serialized UTF-8 (or a supplied `maxBytes`), or when a clipped merge would exceed the
+browser's `colspan`/`rowspan` ceilings, rather than dropping cells silently. `copyText` and
+`copyHtml` are the file's DOM-facing functions: the isolated frame has no `navigator.clipboard`, so
+they select a hidden textarea, run the legacy `copy` command, restore focus and report whether the
+copy happened. `copyHtml` puts `text/html` and the plain fallback on the same clipboard event.
 
 ## 10. Test fixtures
 

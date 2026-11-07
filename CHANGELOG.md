@@ -1,5 +1,48 @@
 # Changelog
 
+## 1.1.4
+
+A more tolerant reader, structural row and column edits, search, and a hand-off that refuses instead
+of truncating.
+
+- Insert and delete whole rows or columns from the **Строки** toolbar menu. The operation is
+  transactional: formulas on every sheet, defined names, merged ranges, tables, drawings, filters,
+  selections, validations, hyperlinks and column geometry are translated together before anything
+  changes, and an unsupported reference or object refuses the whole edit instead of leaving a
+  partially rewritten package. Undo and redo cover structural edits, including after the host
+  accepted a save, because the history keeps the package snapshots.
+- Book search (`Найти`, Ctrl+F) walks cells and formulas across sheets in bounded pages. A
+  truncated page says so and offers **Искать дальше**; a stale cursor is discarded when the model
+  changes instead of replaying old values. Results navigate to the sheet and cell, and hidden
+  matches are named as hidden rather than silently replaced by a neighbouring cell.
+- **Копировать → С форматированием** puts an HTML table with fonts, fills, alignment and borders on
+  the clipboard, with TSV as the plain fallback. A selection too large for HTML is reported and can
+  still be copied as plain text when it fits the text budget.
+- After an accepted edit, undo or redo, formula cells are marked and the grid says that cached
+  results may be out of date: the editor never recalculates formulas. The notice is workbook-wide,
+  survives sheet changes and saving, and is cleared only when a genuinely fresh workbook is opened.
+- A hand-off uses one `terminal.sendText` call. Text longer than 4096 characters is refused, not
+  truncated or split: nothing is sent. Full manual copying is subject to a 200,000-cell selection
+  limit and a conservative 8 × 1024 × 1024 UTF-16-code-unit estimate including a header allowance;
+  the estimate can reject a smaller actual output. Exceeding either copy limit copies nothing and
+  asks the person to reduce the selection. A second request to the same terminal while one is in
+  flight is also refused.
+- `agent.send` reports `unknown: true` when a host failure (a timeout, for example) cannot prove
+  that nothing was typed. The plugin does not retry automatically, so the terminal should be
+  inspected before pressing again. Enter remains opt-in and rides with that one call; the plugin
+  still asks for the same two capabilities, `agent:read` and `terminal:send`.
+- A TSV hand-off uses a fence at least three backticks long and one longer than any run at the
+  start of a body line, so a cell made of backticks cannot close the block early.
+- For workbooks that need it, ExcelJS reads an in-memory, parser-only copy: namespace prefixes and
+  declarations stripped, `xl/drawings/*` (except `.vml`) and `xl/tables/*` removed, `<drawing>` and
+  `<tableParts>` references removed from the sheet XML, and sheet relationship targets normalized
+  to paths relative to the sheet (absolute and `.`/`..` targets included). Saving still starts from
+  the accepted file's own ZIP entries, so the normalized copy is never written back.
+- A sheet with conditional formatting shows a warning above the grid: the rules are preserved but
+  not displayed. An unreadable archive, or a workbook where ExcelJS returns a different number of
+  sheets than `xl/workbook.xml` declares, fails with an error instead of showing a partial workbook.
+- Manifest version is 1.1.4.
+
 ## 1.1.3
 
 - No behaviour change: the editor and the worker are the ones shipped in 1.1.2.

@@ -358,6 +358,34 @@ test('undo after coalescing rewinds to the value before the first keystroke', ()
   assert.equal(log.canUndo, false)
 })
 
+test('structural transactions keep cell edits ordered across save boundaries', () => {
+  const log = createEditLog({ coalesce: false })
+  const mark = log.markSaved()
+  const first = cell('Sheet1', 'A2', num(1), num(2))
+  const structure = {
+    type: 'structural', sheet: 'Sheet1', axis: 'row', action: 'delete', index: 1, count: 1,
+    beforeEntries: [{ name: 'before' }], afterEntries: [{ name: 'after' }]
+  }
+  const last = cell('Sheet1', 'A2', num(3), num(4))
+  log.apply(first)
+  log.apply(structure)
+  log.apply(last)
+  assert.deepEqual(log.opsSince(mark), [first, structure, last])
+  const saved = log.markSaved()
+  assert.deepEqual(log.undo(), last)
+  assert.deepEqual(log.undo(), structure)
+  assert.deepEqual(log.opsSince(saved), [
+    cell('Sheet1', 'A2', num(4), num(3)),
+    { type: 'restore', entries: structure.beforeEntries }
+  ])
+  assert.deepEqual(log.redo(), structure)
+  assert.deepEqual(log.opsSince(saved), [
+    cell('Sheet1', 'A2', num(4), num(3)),
+    { type: 'restore', entries: structure.beforeEntries },
+    structure
+  ])
+})
+
 test('clear resets the log and keeps old save marks meaningful', () => {
   const log = createEditLog({ coalesce: false })
   log.apply(cell('Sheet1', 'A1', num(1), num(2)))

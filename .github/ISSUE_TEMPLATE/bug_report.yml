@@ -1,0 +1,70 @@
+name: Bug report
+description: Something in XLSX Editor does not work as described
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Remove private data before attaching any workbook. A small synthetic file that
+        reproduces the problem is the most useful attachment.
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: What you did, in order, starting from opening the workbook.
+      placeholder: |
+        1. Open ...
+        2. Select ...
+        3. Click ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected result
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual result
+      description: Include the exact error text if there is one.
+    validations:
+      required: true
+  - type: input
+    id: orca-version
+    attributes:
+      label: Orca version
+      description: From Orca's About window, for example 1.4.248.
+    validations:
+      required: true
+  - type: input
+    id: plugin-version
+    attributes:
+      label: XLSX Editor version
+      description: From the plugin list, the release you installed, or orca-plugin.json.
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      description: For example Windows 11 23H2, macOS 15.1 or Ubuntu 24.04.
+    validations:
+      required: true
+  - type: textarea
+    id: sample
+    attributes:
+      label: Safe sample workbook
+      description: Attach or link a minimal workbook that reproduces the issue. Strip private data first; do not attach a real business file.
+      placeholder: Drag the file here, or explain why a sample cannot be shared.
+    validations:
+      required: false
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy check
+      options:
+        - label: Any attached workbook is synthetic or stripped of private data.
+          required: true

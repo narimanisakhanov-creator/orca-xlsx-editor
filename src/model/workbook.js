@@ -11,6 +11,7 @@ import { unzipSync } from 'fflate'
 import { formatValue, isDateFormat } from './numfmt.js'
 import { resolveStyle, themePalette } from './style.js'
 import { readZip, writeZip } from '../write/zip.js'
+import { findElements, unescapeXml } from '../write/xml.js'
 
 // Excel column width is in characters of the default font; the grid needs pixels.
 const COL_WIDTH_TO_PX = 7
@@ -47,25 +48,201 @@ export async function loadWorkbook(bytes) {
   const input = bytes instanceof ArrayBuffer ? new Uint8Array(bytes) : bytes
   if (!(input instanceof Uint8Array)) throw new TypeError('loadWorkbook expects a Uint8Array')
 
+  const prepared = normalizeReaderCopy(input)
   const workbook = new ExcelJS.Workbook()
-  // A relationship may carry an absolute part name (`Target="/xl/tables/table1.xml"`), which OPC
-  // allows and Excel writes; ExcelJS looks the target up verbatim and drops the part, so the sheet
-  // fails to build. A normalised copy is loaded instead — the caller's bytes are never touched.
-  await workbook.xlsx.load(normalizeAbsoluteTargets(input) ?? input)
-
-  // `workbook.model` would serialise every sheet's rows and cells just to reach `themes`, which on
-  // a real file is a second full decode; the theme parts are held on the workbook itself.
+  await workbook.xlsx.load(prepared.bytes)
+  if (prepared.sheetCount != null && workbook.worksheets.length !== prepared.sheetCount) {
+    throw new Error(`workbook could not load all sheets (${workbook.worksheets.length}/${prepared.sheetCount})`)
+  }
   const palette = themePalette(workbook._themes)
   const date1904 = date1904Of(workbook)
-  const notes = new Set()
+  const notes = new Set(prepared.notes)
   const sheets = workbook.worksheets.map((worksheet, index) => sheetModel(worksheet, index, palette, notes, date1904))
-
   return {
     sheets,
     active: activeSheet(workbook, sheets.length),
     date1904,
     notes: [...notes]
   }
+}
+
+/** Build a reader-only archive copy for ExcelJS's known XML and relationship limitations. */
+function normalizeReaderCopy(bytes) {
+  const archive = readZip(bytes)
+  if (archive.status !== 'ok') throw new Error(`workbook archive cannot be read safely (${archive.status})`)
+  const decoder = new TextDecoder()
+  const encoder = new TextEncoder()
+  const notes = []
+  let changed = false
+  let sheetCount = null
+
+  for (let index = archive.entries.length - 1; index >= 0; index--) {
+    const entry = archive.entries[index]
+    if ((entry.name.startsWith('xl/drawings/') && !entry.name.endsWith('.vml')) || entry.name.startsWith('xl/tables/')) {
+      archive.entries.splice(index, 1)
+      changed = true
+    }
+  }
+  for (const entry of archive.entries) {
+    const isWorkbook = entry.name === 'xl/workbook.xml'
+    const isWorksheet = entry.name.startsWith('xl/worksheets/') && entry.name.endsWith('.xml')
+    const isSharedStrings = entry.name === 'xl/sharedStrings.xml'
+    if (!isWorkbook && !isWorksheet && !isSharedStrings) continue
+    const text = decoder.decode(entry.data)
+    const normalized = normalizeXmlNamespaces(text, { isWorkbook, isWorksheet })
+    if (isWorkbook) sheetCount = normalized.sheetCount
+    if (normalized.drawings) notes.push('Drawings were not rendered; the original drawing parts will be preserved on save.')
+    if (normalized.tables) notes.push('Tables were not rendered; the original table parts will be preserved on save.')
+    if (normalized.conditionalFormatting) notes.push('Conditional formatting rules are preserved, but are not displayed.')
+    if (normalized.text !== text) {
+      entry.data = encoder.encode(normalized.text)
+      entry.changed = true
+      changed = true
+    }
+  }
+
+  const relationships = normalizeRelationshipEntries(archive.entries, decoder, encoder)
+  changed ||= relationships
+  if (sheetCount == null) throw new Error('workbook XML is missing')
+  if (!changed) return { bytes, notes, sheetCount }
+  try {
+    return { bytes: writeZip(archive.entries), notes, sheetCount }
+  } catch (error) {
+    throw new Error('workbook reader copy could not be prepared', { cause: error })
+  }
+}
+
+const RELATIONSHIP_NAMESPACES = new Set([
+  'http://schemas.openxmlformats.org/officeDocument/2006/relationships',
+  'http://purl.oclc.org/ooxml/officeDocument/relationships'
+])
+const SPREADSHEET_NAMESPACES = new Set([
+  'http://schemas.openxmlformats.org/spreadsheetml/2006/main',
+  'http://purl.oclc.org/ooxml/spreadsheetml/main'
+])
+
+// Attribute offsets are relative to the token; quoted values may contain `>` and `:`.
+function xmlAttributes(token, start) {
+  const attributes = []
+  const pattern = /([^\s=/>]+)\s*=\s*(["'])(.*?)\2/gs
+  pattern.lastIndex = start
+  for (let match; (match = pattern.exec(token));) {
+    const valueStart = match.index + match[0].indexOf(match[2]) + 1
+    attributes.push({ name: match[1], value: match[3], start: match.index, end: match.index + match[1].length, valueStart, valueEnd: valueStart + match[3].length })
+  }
+  return attributes
+}
+
+// ExcelJS ignores CDATA events and expects unprefixed spreadsheet elements and literal `r:id`.
+// Rewrite only reader-copy XML tokens, with namespace scope and quote-aware boundaries.
+function normalizeXmlNamespaces(text, { isWorkbook, isWorksheet }) {
+  const namespaces = [Object.create(null)]
+  const elements = []
+  const replacements = []
+  let sheetCount = 0
+  let drawings = false
+  let tables = false
+  let conditionalFormatting = false
+  let offset = 0
+  while ((offset = text.indexOf('<', offset)) !== -1) {
+    if (text.startsWith('<!--', offset) || text.startsWith('<![CDATA[', offset) || text.startsWith('<?', offset)) {
+      const cdata = text.startsWith('<![CDATA[', offset)
+      const terminator = cdata ? ']]>' : text.startsWith('<!--', offset) ? '-->' : '?>'
+      const end = text.indexOf(terminator, offset + 2)
+      if (end < 0) break
+      if (cdata) {
+        const value = text.slice(offset + 9, end).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        replacements.push({ start: offset, end: end + 3, value })
+      }
+      offset = end + terminator.length
+      continue
+    }
+    let end = offset + 1
+    let quote = null
+    for (; end < text.length; end++) {
+      const char = text[end]
+      if (quote) { if (char === quote) quote = null }
+      else if (char === '"' || char === "'") quote = char
+      else if (char === '>') break
+    }
+    if (end >= text.length) break
+    const token = text.slice(offset, end + 1)
+    const match = /^<(\/?)([^\s/>]+)/.exec(token)
+    if (!match || match[2].startsWith('!')) { offset = end + 1; continue }
+    const closing = match[1] === '/'
+    const name = match[2]
+    if (closing) {
+      const frame = elements.pop()
+      namespaces.pop()
+      if (frame?.omit) replacements.push({ start: frame.start, end: end + 1, value: '' })
+      if (frame && frame.normalized !== name) replacements.push({ start: offset + 2, end: offset + 2 + name.length, value: frame.normalized })
+    } else {
+      const scope = Object.create(namespaces[namespaces.length - 1])
+      const attrs = xmlAttributes(token, match[0].length)
+      for (const attr of attrs) {
+        if (attr.name === 'xmlns') scope[''] = unescapeXml(attr.value)
+        else if (attr.name.startsWith('xmlns:')) scope[attr.name.slice(6)] = unescapeXml(attr.value)
+      }
+      const colon = name.indexOf(':')
+      const local = colon < 0 ? name : name.slice(colon + 1)
+      const uri = scope[colon < 0 ? '' : name.slice(0, colon)]
+      const spreadsheet = SPREADSHEET_NAMESPACES.has(uri)
+      const normalized = colon >= 0 && spreadsheet ? local : name
+      const parent = elements[elements.length - 1]
+      const root = elements[0]
+      if (isWorkbook && spreadsheet && local === 'sheet' && elements.length === 2 &&
+          parent.local === 'sheets' && parent.spreadsheet && root.local === 'workbook' && root.spreadsheet) sheetCount++
+      const worksheetChild = isWorksheet && elements.length === 1 && root.local === 'worksheet' && root.spreadsheet && spreadsheet
+      const omit = worksheetChild && (local === 'drawing' || local === 'tableParts')
+      if (omit && local === 'drawing') drawings = true
+      if (omit && local === 'tableParts') tables = true
+      if (worksheetChild && local === 'conditionalFormatting') conditionalFormatting = true
+      if (isWorksheet && root?.local === 'worksheet' && root.spreadsheet &&
+          uri === 'http://schemas.microsoft.com/office/spreadsheetml/2009/9/main' &&
+          local === 'conditionalFormattings') conditionalFormatting = true
+      if (normalized !== name) replacements.push({ start: offset + 1, end: offset + 1 + name.length, value: normalized })
+      const relationshipId = attrs.find((attr) => {
+        const split = attr.name.indexOf(':')
+        return split > 0 && attr.name.slice(split + 1) === 'id' && RELATIONSHIP_NAMESPACES.has(scope[attr.name.slice(0, split)])
+      })
+      const collision = attrs.find((attr) => attr.name === 'r:id' && attr !== relationshipId)
+      if (collision) replacements.push({ start: offset + collision.start, end: offset + collision.end, value: '_orca_unrelated_id' })
+      if (relationshipId && relationshipId.name !== 'r:id') {
+        replacements.push({ start: offset + relationshipId.start, end: offset + relationshipId.end, value: 'r:id' })
+      }
+      if (!/\/\s*>$/.test(token)) {
+        namespaces.push(scope)
+        elements.push({ normalized, local, spreadsheet, omit, start: offset })
+      } else if (omit) {
+        replacements.push({ start: offset, end: end + 1, value: '' })
+      }
+    }
+    offset = end + 1
+  }
+  replacements.sort((a, b) => a.start - b.start || b.end - a.end)
+  const chunks = []
+  let cursor = 0
+  for (const replacement of replacements) {
+    if (replacement.start < cursor) continue
+    chunks.push(text.slice(cursor, replacement.start), replacement.value)
+    cursor = replacement.end
+  }
+  chunks.push(text.slice(cursor))
+  return { text: chunks.join(''), sheetCount, drawings, tables, conditionalFormatting }
+}
+
+function normalizeRelationshipEntries(entries, decoder, encoder) {
+  let changed = false
+  for (const entry of entries) {
+    if (!entry.name.startsWith('xl/worksheets/_rels/') || !entry.name.endsWith('.rels')) continue
+    const text = decoder.decode(entry.data)
+    const next = rewriteTargets(entry.name, text)
+    if (next === text) continue
+    entry.data = encoder.encode(next)
+    entry.changed = true
+    changed = true
+  }
+  return changed
 }
 
 /**
@@ -122,20 +299,37 @@ export function normalizeAbsoluteTargets(bytes) {
 }
 
 function rewriteTargets(partName, text) {
-  return text.replace(/<Relationship\b[^>]*>/g, (element) => {
-    // An external target is a URL, not a part of the package.
-    if (/\bTargetMode\s*=\s*["']External["']/i.test(element)) return element
-    return element.replace(/(\bTarget\s*=\s*)(["'])\/([^"']*)\2/, (match, head, quote, target) => {
-      return `${head}${quote}${relativeTarget(partName, target)}${quote}`
-    })
-  })
+  const changes = []
+  for (const element of findElements(text, 'Relationship')) {
+    const token = text.slice(element.start, element.tagEnd)
+    const name = /^<([^\s/>]+)/.exec(token)
+    if (!name) continue
+    const attrs = xmlAttributes(token, name[0].length)
+    if (attrs.some((attr) => attr.name === 'TargetMode' && attr.value.toLowerCase() === 'external')) continue
+    const target = attrs.find((attr) => attr.name === 'Target')
+    if (!target || (!target.value.trim().startsWith('/') && !/[.\\]/.test(target.value))) continue
+    changes.push({ start: element.start + target.valueStart, end: element.start + target.valueEnd, value: relativeTarget(partName, target.value) })
+  }
+  for (let index = changes.length - 1; index >= 0; index--) {
+    const change = changes[index]
+    text = text.slice(0, change.start) + change.value + text.slice(change.end)
+  }
+  return text
 }
 
 /** `../tables/table1.xml` for `/xl/tables/table1.xml` seen from `xl/worksheets/_rels/sheet1.xml.rels`. */
 function relativeTarget(partName, target) {
   const marker = partName.lastIndexOf('_rels/')
   const from = (marker === -1 ? '' : partName.slice(0, marker)).split('/').filter(Boolean)
-  const to = target.replace(/\\/g, '/').split('/').filter(Boolean)
+  const raw = target.trim().replace(/\\/g, '/')
+  const targetParts = raw.split('/').filter(Boolean)
+  const resolved = raw.startsWith('/') ? [] : from.slice()
+  for (const part of targetParts) {
+    if (part === '.') continue
+    if (part === '..') { if (resolved.length) resolved.pop(); continue }
+    resolved.push(part)
+  }
+  const to = resolved
 
   let common = 0
   while (common < from.length && common < to.length && from[common] === to[common]) common++

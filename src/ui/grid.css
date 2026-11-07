@@ -3,6 +3,8 @@
   --grid-ink: #111111;
   --grid-header-height: 26px;
   --grid-row-header-width: 48px;
+  display: flex;
+  flex-direction: column;
   position: relative;
   width: 100%;
   height: 100%;
@@ -18,8 +20,9 @@
 }
 
 .orca-grid-viewport {
-  position: absolute;
-  inset: 0;
+  position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
   overflow: auto;
   outline: none;
   overscroll-behavior: contain;
@@ -66,6 +69,7 @@
 }
 
 .orca-grid-cell {
+  pointer-events: auto;
   display: flex;
   flex-direction: column;
   align-items: stretch;
@@ -77,6 +81,14 @@
   text-overflow: ellipsis;
   text-align: left;
 }
+.orca-grid-cell.orca-grid-active-proxy {
+  position: fixed;
+  width: 1px !important;
+  height: 1px !important;
+  clip-path: inset(50%);
+  pointer-events: none;
+}
+
 
 .orca-grid-cell-content {
   display: block;
@@ -110,6 +122,39 @@
 .orca-grid-cell.is-error {
   color: var(--orca-danger, #b91c1c);
   font-weight: 600;
+}
+
+.orca-grid-cell.is-formula-stale {
+  /* Black and white wedges contrast with each other regardless of workbook fill or theme. */
+  background-image: linear-gradient(135deg, transparent 0 44%, #ffffff 44% 70%, #000000 70% 100%);
+  background-repeat: no-repeat;
+  background-position: top right;
+  background-size: 12px 12px;
+}
+
+.orca-grid-cell.is-formula-stale.is-selected {
+  background-image: linear-gradient(135deg, transparent 0 44%, #ffffff 44% 70%, #000000 70% 100%), linear-gradient(color-mix(in srgb, var(--orca-accent, #93c5fd) 36%, transparent), color-mix(in srgb, var(--orca-accent, #93c5fd) 36%, transparent));
+  background-repeat: no-repeat;
+  background-position: top right, 0 0;
+  background-size: 12px 12px, auto;
+}
+
+.orca-grid-stale-notice {
+  position: relative;
+  z-index: 30;
+  flex: 0 1 auto;
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 0;
+  max-height: 25%;
+  overflow: auto;
+  padding: 5px 9px;
+  border: 0;
+  border-bottom: 1px solid var(--orca-warning, #b45309);
+  background: var(--orca-background, #fffaf0);
+  color: var(--orca-foreground, #713f12);
+  font-size: 11px;
+  line-height: 1.35;
 }
 
 .orca-grid-header {

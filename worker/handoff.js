@@ -1,14 +1,18 @@
 // The text a person hands to an agent: one context line naming the sheet and the range, then the
 // table itself. Pure — no DOM, no Orca API — so `node --test` runs it directly, the editor frame
-// imports it for the preview and for what it sends, and the worker imports it to enforce the host's
-// limit a second time.
+// imports it for the preview and the manual copy action, and the worker imports it to validate the
+// one message it is allowed to send.
 //
 // The table body is not built here. The frame renders it with the same clipboard formatters a copy
-// uses, so a handoff reads exactly like a paste; this module only frames it and guards the size.
+// uses, so a handoff reads exactly like a paste; this module frames it, makes its fence safe for
+// arbitrary cell values and bounds how much of a selection is materialized before the frame refuses
+// to send and offers the full text for manual copying.
 
 /**
  * `terminal.sendText` refuses longer text: Orca's host API schema is
  * `z.string().min(1).max(PANEL_ACTION_TEXT_MAX_LENGTH)`, and `PANEL_ACTION_TEXT_MAX_LENGTH` is 4096.
+ * The handoff is deliberately one message: Orca offers no atomicity or idempotency across calls, so a
+ * handoff longer than this is not split — it is not sent at all and the person copies it manually.
  */
 export const TEXT_LIMIT = 4096
 
@@ -21,14 +25,28 @@ const STATE_RANK = { working: 0, waiting: 1, blocked: 2, done: 3 }
 const UNKNOWN_STATE = 4
 
 /**
+ * A backtick run long enough not to be closed by any line of `body`: a cell whose value is ```` ``` ````
+ * must not end the block and let the rest of the table escape it.
+ */
+function fenceMarker(body) {
+  let longest = 0
+  for (const line of body.split(/\r\n|\r|\n/)) {
+    const match = /^[ \t]*(`{3,})/.exec(line)
+    if (match) longest = Math.max(longest, match[1].length)
+  }
+  return '`'.repeat(Math.max(3, longest + 1))
+}
+
+/**
  * Handoff text for `terminal.sendText`.
  *
  * `cells` is the table body already rendered for the chosen `format` (Markdown from
  * `selectionToMarkdown`, TSV from `selectionToTsv`); an empty body means there is nothing to send
  * and comes back as an empty string, never as a header with no table. `format` only decides the
  * framing: a TSV body goes into a fenced block so an agent sees its tabs as one block instead of
- * loose columns, a Markdown table needs no fence. An unknown format is treated as Markdown, the
- * default the popup offers.
+ * loose columns; the fence is one backtick longer than any run at the start of a body line, so a
+ * cell cannot close it early. A Markdown table needs no fence. An unknown format is treated as
+ * Markdown, the default the popup offers.
  *
  * `fileName` is optional because a custom editor is handed bytes and learns no path; when a caller
  * does know the file it is named in the context line, and when it does not the line stays silent
@@ -37,9 +55,12 @@ const UNKNOWN_STATE = 4
 export function buildHandoff({ sheetName, range, format, cells, fileName } = {}) {
   const body = typeof cells === 'string' ? cells : ''
   if (body === '') return ''
-  const sheet = typeof sheetName === 'string' ? sheetName.trim() : ''
-  const area = typeof range === 'string' ? range.trim() : ''
-  const file = typeof fileName === 'string' ? fileName.trim() : ''
+  // A line break in a name would put the rest of that name on its own line, where a backtick run
+  // could open a code fence before the table does. The header stays one line.
+  const flatten = (value) => (typeof value === 'string' ? value.replace(/[\r\n]+/g, ' ').trim() : '')
+  const sheet = flatten(sheetName)
+  const area = flatten(range)
+  const file = flatten(fileName)
 
   const where = []
   if (sheet) where.push(`лист «${sheet}»`)
@@ -48,27 +69,8 @@ export function buildHandoff({ sheetName, range, format, cells, fileName } = {})
   const header = where.length ? `Таблица из XLSX: ${where.join(', ')}` : 'Таблица из XLSX'
 
   if (format !== 'tsv') return `${header}\n\n${body}`
-  return `${header}\n\n\`\`\`tsv\n${body}\n\`\`\``
-}
-
-/**
- * Keeps text inside the host's limit, cutting at a line boundary so a table is not sliced mid-row,
- * and says so in the text itself. The returned `text` is never longer than `limit`; `truncated`
- * tells the caller to report the loss instead of pretending the whole table arrived.
- */
-export function truncateText(text, limit = TEXT_LIMIT) {
-  const source = typeof text === 'string' ? text : ''
-  if (!Number.isInteger(limit) || limit <= 0) return { text: '', truncated: source.length > 0 }
-  if (source.length <= limit) return { text: source, truncated: false }
-
-  const note = `\n…обрезано по лимиту ${limit} символов`
-  const room = Math.max(0, limit - note.length)
-  let cut = source.slice(0, room)
-  const breakAt = cut.lastIndexOf('\n')
-  // Only a break with content in front of it is worth cutting on; a single over-long first line is
-  // cut hard, because an empty table would be worse than a broken one.
-  if (breakAt > 0) cut = cut.slice(0, breakAt)
-  return { text: (cut + note).slice(0, limit), truncated: true }
+  const fence = fenceMarker(body)
+  return `${header}\n\n${fence}tsv\n${body}\n${fence}`
 }
 
 /** Agents worth offering first: working, waiting, blocked, then done; newest state change first. */
@@ -89,6 +91,26 @@ export function rankAgents(agents) {
       return left.index - right.index
     })
     .map((entry) => entry.agent)
+}
+
+/**
+ * How many leading rows fit the materialization budget. The frame counts row costs before building
+ * the formatter matrix; when not every row fits, the full handoff is over the message limit, so the
+ * frame refuses to send and copies the full selection only on demand.
+ */
+export function fitHandoffRows(rowCosts, budget) {
+  const list = Array.isArray(rowCosts) ? rowCosts : []
+  const cap = typeof budget === 'number' && budget >= 0 ? budget : Infinity
+  let total = 0
+  let rows = 0
+  for (const cost of list) {
+    const value = Number(cost)
+    if (!Number.isFinite(value) || value < 0) return { rows, cut: true }
+    if (total + value > cap) return { rows, cut: true }
+    total += value
+    rows++
+  }
+  return { rows, cut: false }
 }
 
 /**

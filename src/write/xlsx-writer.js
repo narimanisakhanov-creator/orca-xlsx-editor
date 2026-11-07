@@ -5,6 +5,7 @@
 // other entry is the very same object it was handed.
 
 import {
+  attrRecords,
   escapeXml,
   findElement,
   findElements,
@@ -15,6 +16,7 @@ import {
   rootPrefix,
   setAttr,
   topLevelElements,
+  unescapeXml,
 } from './xml.js';
 
 /**
@@ -189,6 +191,42 @@ function encodeXml(text, bom) {
 // ---------------------------------------------------------------------------
 // Package model
 
+const RELATIONSHIP_NAMESPACES = new Set([
+  'http://schemas.openxmlformats.org/officeDocument/2006/relationships',
+  'http://purl.oclc.org/ooxml/officeDocument/relationships',
+]);
+
+// Namespace declarations can be overridden at each level. Never guess an id by
+// its prefix or local name: an unrelated r:id can point to a different worksheet.
+function namespacesIn(attrs, inherited) {
+  const namespaces = new Map(inherited);
+  const declared = new Set();
+  for (const attr of attrRecords(attrs)) {
+    if (!attr.name.startsWith('xmlns:')) continue;
+    const prefix = attr.name.slice(6);
+    if (!prefix || declared.has(prefix)) throw new Refusal('ambiguous namespace declarations in workbook');
+    declared.add(prefix);
+    namespaces.set(prefix, unescapeXml(attr.value));
+  }
+  return namespaces;
+}
+
+function sheetRelationshipId(attrs, inherited) {
+  const namespaces = namespacesIn(attrs, inherited);
+  let id = null;
+  for (const attr of attrRecords(attrs)) {
+    const separator = attr.name.indexOf(':');
+    if (separator < 0 || attr.name.slice(separator + 1) !== 'id') continue;
+    const prefix = attr.name.slice(0, separator);
+    if (!namespaces.has(prefix)) throw new Refusal('undeclared namespace on workbook sheet id');
+    if (!RELATIONSHIP_NAMESPACES.has(namespaces.get(prefix))) continue;
+    if (id !== null) throw new Refusal('ambiguous workbook sheet relationship id');
+    id = unescapeXml(attr.value);
+  }
+  if (!id) throw new Refusal('workbook sheet has no relationship id');
+  return id;
+}
+
 /**
  * Read the workbook skeleton from the entries: sheet names, their rel ids and the
  * worksheet part each one points at. Returns null when the package is not a workbook;
@@ -236,6 +274,7 @@ export function xlsxPackage(zipEntries, diag = null) {
       for (const rel of findElements(relText, 'Relationship')) {
         const id = getAttr(rel.attrs, 'Id');
         if (!id) continue;
+        if (rels.has(id)) return fail(`duplicate workbook relationship id "${id}"`);
         rels.set(id, {
           id,
           type: getAttr(rel.attrs, 'Type') ?? '',
@@ -246,10 +285,16 @@ export function xlsxPackage(zipEntries, diag = null) {
 
     const bookDir = dirOf(bookEntry.name);
     const sheets = [];
-    for (const el of findElements(book.text, 'sheet')) {
+    const root = findElement(book.text, 'workbook');
+    const sheetContainers = topLevelElements(book.text).filter((el) => el.local === 'sheets');
+    if (!root || sheetContainers.length !== 1) return fail('workbook has no unique sheets element');
+    const container = sheetContainers[0];
+    const scopes = namespacesIn(container.attrs, namespacesIn(root.attrs, new Map()));
+    const sheetXml = book.text.slice(container.start, container.end);
+    for (const el of topLevelElements(sheetXml).filter((child) => child.local === 'sheet')) {
       const name = getAttr(el.attrs, 'name');
       if (name == null) continue;
-      const relId = getAttr(el.attrs, 'r:id');
+      const relId = sheetRelationshipId(el.attrs, scopes);
       const rel = relId ? rels.get(relId) ?? null : null;
       const part = rel ? resolveTarget(bookDir, rel.target) : null;
       sheets.push({

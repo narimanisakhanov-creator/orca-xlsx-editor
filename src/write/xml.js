@@ -255,7 +255,7 @@ export function topLevelElements(xml) {
 }
 
 /** Attribute records of a start tag's raw attribute text. */
-function attrRecords(attrsText) {
+export function attrRecords(attrsText) {
   const records = [];
   const n = attrsText.length;
   let i = 0;

@@ -104,6 +104,66 @@ test('xml helpers keep offsets, attrs and escaping honest', () => {
   assert.equal(unescapeXml('&#1043;&#x41;'), 'ГA');
 });
 
+test('sheet relationship ids are resolved by namespace, not a conflicting r prefix', () => {
+  const source = unpack(entriesFrom(loadFixture('rich.xlsx')));
+  const book = DECODER.decode(source['xl/workbook.xml'])
+    .replace('xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"',
+      'xmlns:rel="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:r="urn:unrelated"')
+    .replace(/r:id="([^"]+)"/g, 'rel:id="$1" r:id="wrong"');
+  source['xl/workbook.xml'] = ENCODER.encode(book);
+  const result = applyEdits(entriesFrom(zipSync(source)), [
+    { sheet: 'Summary', ref: 'B2', value: { kind: 'number', value: 42 } },
+  ]);
+  assert.equal(result.status, 'ok', result.reason);
+  assert.match(cellXml(sheetPart(result.entries, RICH_SUMMARY), 'B2'), /<v>42<\/v>/);
+});
+
+test('undeclared or ambiguous sheet relationship ids are refused without changes', () => {
+  const source = unpack(entriesFrom(loadFixture('rich.xlsx')));
+  const original = DECODER.decode(source['xl/workbook.xml']);
+  for (const book of [
+    original.replace(/r:id="([^"]+)"/, 'unknown:id="$1"'),
+    original.replace(/r:id="([^"]+)"/, 'r:id="$1" xmlns:rel="http://schemas.openxmlformats.org/officeDocument/2006/relationships" rel:id="$1"'),
+  ]) {
+    source['xl/workbook.xml'] = ENCODER.encode(book);
+    const entries = entriesFrom(zipSync(source));
+    const before = entries.map((entry) => entry.data.slice());
+    const result = applyEdits(entries, [
+      { sheet: 'Summary', ref: 'B2', value: { kind: 'number', value: 42 } },
+    ]);
+    assert.equal(result.status, 'refused');
+    assert.deepEqual(entries.map((entry) => entry.data), before);
+  }
+});
+
+test('sheet relationship prefix overrides at sheet scope are honored', () => {
+  const source = unpack(entriesFrom(loadFixture('rich.xlsx')));
+  source['xl/workbook.xml'] = ENCODER.encode(DECODER.decode(source['xl/workbook.xml'])
+    .replace('name="Summary"', 'xmlns:r="urn:unrelated" xmlns:rel="http://schemas.openxmlformats.org/officeDocument/2006/relationships" rel:id="rId1" name="Summary"')
+    .replace(/(name="Summary"[^>]*?)r:id="rId1"/, '$1r:id="wrong"'));
+  const result = applyEdits(entriesFrom(zipSync(source)), [
+    { sheet: 'Summary', ref: 'B2', value: { kind: 'number', value: 42 } },
+  ]);
+  assert.equal(result.status, 'ok', result.reason);
+  assert.match(cellXml(sheetPart(result.entries, RICH_SUMMARY), 'B2'), /<v>42<\/v>/);
+});
+
+test('conflicting workbook relationship IDs are refused before writing a cell', () => {
+  const source = unpack(entriesFrom(loadFixture('rich.xlsx')));
+  const path = 'xl/_rels/workbook.xml.rels';
+  const rels = DECODER.decode(source[path]);
+  const first = findElements(rels, 'Relationship').find((el) => getAttr(el.attrs, 'Id') === 'rId1');
+  assert.ok(first);
+  source[path] = ENCODER.encode(rels.replace('</Relationships>', `${rels.slice(first.start, first.end)}</Relationships>`));
+  const entries = entriesFrom(zipSync(source));
+  const before = entries.map((entry) => entry.data.slice());
+  const result = applyEdits(entries, [
+    { sheet: 'Summary', ref: 'B2', value: { kind: 'number', value: 42 } },
+  ]);
+  assert.equal(result.status, 'refused');
+  assert.deepEqual(entries.map((entry) => entry.data), before);
+});
+
 test('number edit touches only the cell and leaves every other entry byte-identical', () => {
   const before = entriesFrom(loadFixture('rich.xlsx'));
   const result = applyEdits(before, [

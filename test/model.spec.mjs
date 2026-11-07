@@ -13,6 +13,8 @@ import { unzipSync, zipSync } from 'fflate'
 import { loadWorkbook, normalizeAbsoluteTargets } from '../src/model/workbook.js'
 import { formatValue, isDateFormat } from '../src/model/numfmt.js'
 import { resolveStyle, themePalette } from '../src/model/style.js'
+import { readZip } from '../src/write/zip.js'
+import { applyEdits } from '../src/write/xlsx-writer.js'
 import { fixtureBytes as bytesOf } from './helpers/fixtures.mjs'
 
 async function loadFixture(name) {
@@ -28,7 +30,7 @@ test('rich.xlsx: three sheets, in file order, first one active', async () => {
   assert.deepEqual(model.sheets.map((sheet) => sheet.index), [0, 1, 2])
   assert.equal(model.active, 0)
   assert.equal(model.date1904, false)
-  assert.deepEqual(model.notes, [])
+  assert.ok(model.notes.some((note) => note.includes('Conditional formatting rules are preserved')))
 })
 
 test('rich.xlsx Summary: header A1 font, fill and alignment', async () => {
@@ -513,6 +515,171 @@ test('a workbook without absolute targets is not rebuilt', async () => {
     load = Math.min(load, performance.now() - started)
   }
   assert.ok(probe < load * 0.2, `${probe.toFixed(2)} ms to check, ${load.toFixed(1)} ms to load`)
+})
+
+test('reader normalization accepts prefixed workbook and worksheet tags', async () => {
+  const files = unzipSync(bytesOf('styled.xlsx'))
+  const xml = (name) => new TextDecoder().decode(files[name])
+  const encoder = new TextEncoder()
+  files['xl/workbook.xml'] = encoder.encode(xml('xl/workbook.xml').replace('<workbook', '<x:workbook xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main"').replace('</workbook>', '</x:workbook>'))
+  files['xl/worksheets/sheet1.xml'] = encoder.encode(xml('xl/worksheets/sheet1.xml').replace('<worksheet', '<x:worksheet xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main"').replace('</worksheet>', '</x:worksheet>'))
+  const model = await loadWorkbook(zipSync(files))
+  assert.ok(model.sheets.length > 0)
+})
+
+test('reader-only drawing and table omission is reported without changing source bytes', async () => {
+  const files = unzipSync(bytesOf('styled.xlsx'))
+  const name = 'xl/worksheets/sheet1.xml'
+  const text = new TextDecoder().decode(files[name])
+  files[name] = new TextEncoder().encode(text.replace('</worksheet>', '<drawing r:id="rIdDrawing"/><tableParts count="1"><tablePart r:id="rIdTable"/></tableParts></worksheet>'))
+  const bytes = zipSync(files)
+  const model = await loadWorkbook(bytes)
+  assert.ok(model.notes.some((note) => note.includes('Drawings were not rendered')))
+  assert.ok(model.notes.some((note) => note.includes('Tables were not rendered')))
+})
+test('reader normalization preserves CDATA cell text and alternate relationship id prefix', async () => {
+  const files = unzipSync(bytesOf('styled.xlsx'))
+  const encoder = new TextEncoder()
+  const sheetName = 'xl/worksheets/sheet1.xml'
+  const sheet = new TextDecoder().decode(files[sheetName])
+  files[sheetName] = encoder.encode(sheet.replace('<t>Store</t>', '<t><![CDATA[Store]]></t>'))
+  const workbookName = 'xl/workbook.xml'
+  const workbook = new TextDecoder().decode(files[workbookName])
+  files[workbookName] = encoder.encode(workbook.replace(/r:id=/g, 'rel:id=').replace('xmlns:r=', 'xmlns:rel='))
+  const model = await loadWorkbook(zipSync(files))
+  assert.equal(model.sheets[0].name, 'Ledger')
+  assert.equal(model.sheets[0].cells.get('0,0').value.display, 'Store')
+})
+
+test('reader resolves locally declared relationship aliases without rewriting quoted values or comments', async () => {
+  const files = unzipSync(bytesOf('styled.xlsx'))
+  const decoder = new TextDecoder()
+  const encoder = new TextEncoder()
+  const name = 'xl/workbook.xml'
+  let xml = decoder.decode(files[name])
+  xml = xml.replace(/<sheet ([^>]*?)r:id="([^"]+)"/, '<sheet $1xmlns:rel="http://schemas.openxmlformats.org/officeDocument/2006/relationships" xmlns:r="urn:other" rel:id="$2" r:id="decoy" custom="a > rel:id=untouched"')
+  xml = xml.replace('<sheets>', '<sheets><!-- <sheet name="phantom" r:id="missing"/> -->')
+  files[name] = encoder.encode(xml)
+  const sheetName = 'xl/worksheets/sheet1.xml'
+  xml = decoder.decode(files[sheetName])
+  files[sheetName] = encoder.encode(xml.replace('<t>Store</t>', '<t><![CDATA[Ledger <x:tag> & "rel:id=foo"]]></t>'))
+  const bytes = zipSync(files)
+  const original = Uint8Array.from(bytes)
+  const model = await loadWorkbook(bytes)
+  assert.deepEqual(model.sheets.map((sheet) => sheet.name), ['Ledger'])
+  assert.equal(model.sheets[0].cells.get('0,0').value.display, 'Ledger <x:tag> & "rel:id=foo"')
+  assert.deepEqual(bytes, original)
+})
+
+test('reader reports conditional formatting without mistaking commented elements for sheets', async () => {
+  const files = unzipSync(bytesOf('styled.xlsx'))
+  const decoder = new TextDecoder()
+  const encoder = new TextEncoder()
+  const name = 'xl/worksheets/sheet1.xml'
+  const xml = decoder.decode(files[name])
+  files[name] = encoder.encode(xml.replace('</worksheet>', '<conditionalFormatting sqref="A1"><cfRule type="expression" priority="1"><formula>1</formula></cfRule></conditionalFormatting></worksheet>'))
+  const bytes = zipSync(files)
+  const original = Uint8Array.from(bytes)
+  const model = await loadWorkbook(bytes)
+  assert.equal(model.sheets.length, 1)
+  assert.ok(model.notes.some((note) => note.includes('Conditional formatting')))
+  assert.deepEqual(bytes, original)
+})
+
+test('relationship target normalization leaves comments and quoted attribute text intact', async () => {
+  const files = unzipSync(await absoluteTargetBook())
+  const decoder = new TextDecoder()
+  const encoder = new TextEncoder()
+  const name = 'xl/worksheets/_rels/sheet1.xml.rels'
+  let xml = decoder.decode(files[name])
+  xml = xml.replace('<Relationship ', '<!-- <Relationship Target="/must/not/change"/> --><Relationship Extra="a > b :Target=\'/keep\'" ')
+  files[name] = encoder.encode(xml)
+  const normalized = normalizeAbsoluteTargets(zipSync(files))
+  assert.ok(normalized)
+  const result = decoder.decode(unzipSync(normalized)[name])
+  assert.ok(result.includes('<!-- <Relationship Target="/must/not/change"/> -->'))
+  assert.ok(result.includes('Extra="a > b :Target=\'/keep\'"'))
+  assert.ok(result.includes('Target="../tables/table1.xml"'))
+})
+
+test('saving an unrelated cell keeps the original workbook alias and worksheet CDATA', async () => {
+  const files = unzipSync(bytesOf('styled.xlsx'))
+  const decoder = new TextDecoder()
+  const encoder = new TextEncoder()
+  const workbookName = 'xl/workbook.xml'
+  const sheetName = 'xl/worksheets/sheet1.xml'
+  files[workbookName] = encoder.encode(decoder.decode(files[workbookName]).replaceAll('r:id=', 'rel:id=').replace('xmlns:r=', 'xmlns:rel='))
+  files[sheetName] = encoder.encode(decoder.decode(files[sheetName]).replace('<t>Store</t>', '<t><![CDATA[Store]]></t>'))
+  const bytes = zipSync(files)
+  await loadWorkbook(bytes)
+  const archive = readZip(bytes)
+  assert.equal(archive.status, 'ok')
+  const result = applyEdits(archive.entries, [{ sheet: 'Ledger', ref: 'Q2', value: { kind: 'number', value: 42 } }])
+  assert.equal(result.status, 'ok', result.reason)
+  const workbook = result.entries.find((entry) => entry.name === workbookName)
+  const sheet = result.entries.find((entry) => entry.name === sheetName)
+  assert.deepEqual(workbook.data, files[workbookName])
+  assert.ok(decoder.decode(sheet.data).includes('<t><![CDATA[Store]]></t>'))
+})
+
+test('foreign extension elements with drawing and tableParts names are not omitted or warned', async () => {
+  const files = unzipSync(bytesOf('styled.xlsx'))
+  const name = 'xl/worksheets/sheet1.xml'
+  const text = new TextDecoder().decode(files[name])
+  const extension = '<extLst><ext uri="foreign"><foo:tableParts xmlns:foo="urn:foreign"><foo:drawing/></foo:tableParts></ext></extLst>'
+  files[name] = new TextEncoder().encode(text.replace('</worksheet>', `${extension}</worksheet>`))
+  const bytes = zipSync(files)
+  const model = await loadWorkbook(bytes)
+  assert.equal(model.sheets[0].cells.get('0,0').value.display, 'Store')
+  assert.ok(!model.notes.some((note) => /Drawings were not rendered|Tables were not rendered/.test(note)))
+  assert.equal(new TextDecoder().decode(unzipSync(bytes)[name]), text.replace('</worksheet>', `${extension}</worksheet>`))
+})
+
+test('shared string CDATA is displayed while its original part survives an unrelated save', async () => {
+  const workbook = new ExcelJS.Workbook()
+  workbook.addWorksheet('Data').getCell('A1').value = 'Important'
+  const files = unzipSync(new Uint8Array(await workbook.xlsx.writeBuffer()))
+  const name = 'xl/sharedStrings.xml'
+  const decoder = new TextDecoder()
+  const xml = decoder.decode(files[name])
+  assert.ok(xml.includes('<t>Important</t>'))
+  files[name] = new TextEncoder().encode(xml.replace('<t>Important</t>', '<t><![CDATA[Important <x> & more]]></t>'))
+  const bytes = zipSync(files)
+  const model = await loadWorkbook(bytes)
+  assert.equal(model.sheets[0].cells.get('0,0').value.display, 'Important <x> & more')
+  const archive = readZip(bytes)
+  assert.equal(archive.status, 'ok')
+  const saved = applyEdits(archive.entries, [{ sheet: 'Data', ref: 'B1', value: { kind: 'number', value: 1 } }])
+  assert.equal(saved.status, 'ok', saved.reason)
+  assert.deepEqual(saved.entries.find((entry) => entry.name === name).data, files[name])
+})
+
+test('nested drawings inside an omitted tableParts element do not corrupt the worksheet', async () => {
+  const files = unzipSync(bytesOf('styled.xlsx'))
+  const name = 'xl/worksheets/sheet1.xml'
+  const xml = new TextDecoder().decode(files[name])
+  files[name] = new TextEncoder().encode(xml.replace('</worksheet>', '<tableParts><drawing/></tableParts></worksheet>'))
+  const model = await loadWorkbook(zipSync(files))
+  assert.equal(model.sheets[0].cells.get('0,0').value.display, 'Store')
+  assert.ok(model.notes.some((note) => note.includes('Tables were not rendered')))
+  assert.ok(!model.notes.some((note) => note.includes('Drawings were not rendered')))
+})
+
+test('many prefixed spreadsheet elements retain their values and structural sheet count', async () => {
+  const files = unzipSync(bytesOf('styled.xlsx'))
+  const encoder = new TextEncoder()
+  const decoder = new TextDecoder()
+  const workbookName = 'xl/workbook.xml'
+  const sheetName = 'xl/worksheets/sheet1.xml'
+  const xml = decoder.decode(files[sheetName])
+    .replace('<worksheet ', '<worksheet xmlns:x="http://schemas.openxmlformats.org/spreadsheetml/2006/main" ')
+    .replace(/<(\/?)([A-Za-z][\w.-]*)(?=[\s/>])/g, '<$1x:$2')
+  files[sheetName] = encoder.encode(xml)
+  files[workbookName] = encoder.encode(decoder.decode(files[workbookName]).replace('</sheets>', '<foreign:sheet xmlns:foreign="urn:foreign"/></sheets>'))
+  const model = await loadWorkbook(zipSync(files))
+  assert.equal(model.sheets.length, 1)
+  assert.equal(model.sheets[0].cells.get('0,0').value.display, 'Store')
+  assert.equal(model.sheets[0].rowCount, 166)
 })
 
 // A workbook from the 481-file audit: two sheets whose table parts are reached through absolute

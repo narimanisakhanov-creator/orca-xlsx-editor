@@ -2,7 +2,7 @@
 // themselves, mounted on a stand-in `orca` so no terminal and no Orca window are involved.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { TEXT_LIMIT, buildHandoff, rankAgents, readSend, truncateText } from '../worker/handoff.js'
+import { fitHandoffRows, TEXT_LIMIT, buildHandoff, rankAgents, readSend } from '../worker/handoff.js'
 import activate from '../worker/main.js'
 import { selectionToMarkdown, selectionToTsv } from '../src/ui/clipboard.js'
 import { loadWorkbook } from '../src/model/workbook.js'
@@ -104,40 +104,31 @@ test('an unknown format is the Markdown default, not a broken frame', () => {
   assert.equal(text, 'Таблица из XLSX: лист «S», диапазон A1\n\nx')
 })
 
-test('text under the limit is left exactly as it was', () => {
-  const short = 'Таблица из XLSX: лист «S»\n\n| a |'
-  assert.deepEqual(truncateText(short), { text: short, truncated: false })
-  assert.deepEqual(truncateText(short, short.length), { text: short, truncated: false })
+test('a cell that is only backticks cannot close the handoff fence early', () => {
+  const rows = ['```', ...Array.from({ length: 400 }, (_, index) => `${index}\t${'z'.repeat(20)}`)]
+  const text = buildHandoff({ sheetName: 'S', range: 'A1:B401', format: 'tsv', cells: rows.join('\n') })
+
+  // The fence is one backtick longer than the data, so the ``` row stays inside the block.
+  assert.ok(text.includes('\n````tsv\n'))
+  assert.ok(text.endsWith('\n````'))
+  assert.ok(text.split('\n').includes('```'))
 })
 
-test('an over-long handoff is cut on a line boundary and says so', () => {
-  const row = (index) => `| row ${index} | ${'x'.repeat(40)} |`
-  const body = Array.from({ length: 100 }, (_, index) => row(index)).join('\n')
-  assert.ok(body.length > TEXT_LIMIT)
-
-  const cut = truncateText(body)
-  assert.equal(cut.truncated, true)
-  assert.ok(cut.text.length <= TEXT_LIMIT, `expected <= ${TEXT_LIMIT}, got ${cut.text.length}`)
-  assert.ok(cut.text.endsWith(`…обрезано по лимиту ${TEXT_LIMIT} символов`))
-  // Every surviving line is a whole table row: no half row is left looking like data.
-  const lines = cut.text.split('\n')
-  const rows = lines.slice(0, -1)
-  assert.ok(rows.length > 0)
-  for (const line of rows) assert.equal(line, row(Number(/\d+/.exec(line)[0])))
-  assert.equal(lines.at(-1), `…обрезано по лимиту ${TEXT_LIMIT} символов`)
+test('a carriage return before backticks cannot close a TSV fence', () => {
+  const text = buildHandoff({ format: 'tsv', cells: 'first\r```\rrest' })
+  assert.ok(text.includes('\n````tsv\nfirst\r```\rrest\n````'))
 })
 
-test('a first line longer than the limit is cut hard instead of dropped', () => {
-  const cut = truncateText('y'.repeat(5000), 100)
-  assert.equal(cut.truncated, true)
-  assert.equal(cut.text.length, 100)
-  assert.ok(cut.text.startsWith('y'))
+test('the row budget keeps a prefix and marks the cut instead of refusing', () => {
+  assert.deepEqual(fitHandoffRows([10, 10, 10], 25), { rows: 2, cut: true })
+  assert.deepEqual(fitHandoffRows([10, 10, 10], 30), { rows: 3, cut: false })
+  assert.deepEqual(fitHandoffRows([50], 25), { rows: 0, cut: true })
+  assert.deepEqual(fitHandoffRows([], 25), { rows: 0, cut: false })
+  assert.deepEqual(fitHandoffRows([1, 2], Infinity), { rows: 2, cut: false })
+  assert.deepEqual(fitHandoffRows([1], 0), { rows: 0, cut: true })
+  assert.deepEqual(fitHandoffRows([0], 0), { rows: 1, cut: false })
 })
 
-test('no limit means no room for anything but the truncation mark', () => {
-  assert.deepEqual(truncateText('abc', 0), { text: '', truncated: true })
-  assert.deepEqual(truncateText('', 0), { text: '', truncated: false })
-})
 
 test('agents are ranked working, waiting, blocked, then done, newest state first', () => {
   const agents = [
@@ -163,7 +154,7 @@ test('agents with an equal state and instant keep the host order, and junk is sk
   assert.deepEqual(rankAgents(null), [])
 })
 
-test('a send request needs a terminal and text, and Enter is opt-in', () => {
+test('a send request needs a terminal and a payload, and Enter is opt-in', () => {
   assert.deepEqual(readSend(null), { ok: false, reason: 'agent.send needs an object' })
   assert.equal(readSend({ text: 'x' }).ok, false)
   assert.equal(readSend({ terminalId: '', text: 'x' }).ok, false)
@@ -173,7 +164,9 @@ test('a send request needs a terminal and text, and Enter is opt-in', () => {
   assert.equal(readSend({ terminalId: 't1', text: 'x', enter: 'yes' }).ok, false)
   assert.deepEqual(readSend({ terminalId: 't1', text: 'x' }), { ok: true, terminalId: 't1', text: 'x', enter: false })
   assert.deepEqual(readSend({ terminalId: 't1', text: 'x', enter: true }), { ok: true, terminalId: 't1', text: 'x', enter: true })
+  assert.equal(readSend({ terminalId: 't1', parts: ['a', 'b'] }).ok, false)
 })
+
 
 test('agent.list asks the host once and hands back the ranked list', async () => {
   const host = fakeOrca({
@@ -193,27 +186,89 @@ test('agent.send types the text without pressing Enter unless asked', async () =
   activate(host)
 
   const answer = await host.handlers.get('agent.send')({ terminalId: 'term-1', text: 'Таблица из XLSX' })
-  assert.deepEqual(answer, { accepted: true, sent: 'Таблица из XLSX', truncated: false })
+  assert.deepEqual(answer, { accepted: true, sent: 'Таблица из XLSX', unknown: false })
   assert.deepEqual(host.calls.at(-1), {
     method: 'terminal.sendText',
     params: { terminalId: 'term-1', text: 'Таблица из XLSX', enter: false }
   })
 })
 
-test('agent.send truncates at the host limit before the call and reports it', async () => {
+test('agent.send accepts exactly 4096 characters once and refuses longer text without typing', async () => {
   const host = fakeOrca({ 'terminal.sendText': { accepted: true } })
   activate(host)
-  const long = Array.from({ length: 200 }, (_, index) => `| line ${index} | ${'z'.repeat(30)} |`).join('\n')
-
-  const answer = await host.handlers.get('agent.send')({ terminalId: 'term-1', text: long, enter: true })
-  const sent = host.calls.at(-1).params.text
-
-  assert.equal(answer.accepted, true)
-  assert.equal(answer.truncated, true)
-  assert.equal(sent, answer.sent)
-  assert.ok(sent.length <= TEXT_LIMIT)
-  assert.equal(host.calls.at(-1).params.enter, true)
+  const send = host.handlers.get('agent.send')
+  const text = 'x'.repeat(4096)
+  assert.deepEqual(await send({ terminalId: 't', text, enter: true }), { accepted: true, sent: text, unknown: false })
+  assert.deepEqual(host.calls, [{ method: 'terminal.sendText', params: { terminalId: 't', text, enter: true } }])
+  const refused = await send({ terminalId: 't', text: text + 'x' })
+  assert.equal(refused.accepted, false)
+  assert.equal(refused.unknown, false)
+  assert.match(refused.reason, /скопируйте полный текст/i)
+  assert.equal(host.calls.length, 1)
 })
+
+test('a timeout has unknown outcome and is never retried automatically', async () => {
+  const timeout = Object.assign(new Error('timed out'), { code: 'timeout', retryable: true })
+  const host = fakeOrca({ 'terminal.sendText': timeout })
+  activate(host)
+  const answer = await host.handlers.get('agent.send')({ terminalId: 't', text: 'table' })
+  assert.equal(answer.accepted, false)
+  assert.equal(answer.unknown, true)
+  assert.equal(host.calls.length, 1)
+})
+
+test('a host validation refusal has a known outcome', async () => {
+  const error = Object.assign(new Error('bad parameters'), { code: 'invalid_params' })
+  const host = fakeOrca({ 'terminal.sendText': error })
+  activate(host)
+  const answer = await host.handlers.get('agent.send')({ terminalId: 't', text: 'table' })
+  assert.equal(answer.accepted, false)
+  assert.equal(answer.unknown, false)
+  assert.equal(host.calls.length, 1)
+})
+
+test('an unrecognized host response does not claim that the terminal was untouched', async () => {
+  const host = fakeOrca({ 'terminal.sendText': {} })
+  activate(host)
+  const answer = await host.handlers.get('agent.send')({ terminalId: 't', text: 'table' })
+  assert.equal(answer.accepted, false)
+  assert.equal(answer.unknown, true)
+  assert.equal(host.calls.length, 1)
+})
+
+test('a second send to the same terminal while one is in flight is refused', async () => {
+  let release
+  const gate = new Promise((resolve) => {
+    release = resolve
+  })
+  let calls = 0
+  const host = fakeOrca({
+    'terminal.sendText': async () => {
+      calls++
+      await gate
+      return { accepted: true }
+    }
+  })
+  activate(host)
+
+  const first = host.handlers.get('agent.send')({ terminalId: 'term-1', text: 'a' })
+  // The first call is suspended in the host; the same terminal must not receive a second call.
+  const second = await host.handlers.get('agent.send')({ terminalId: 'term-1', text: 'b' })
+
+  assert.equal(second.accepted, false)
+  assert.equal(second.unknown, false)
+  assert.match(second.reason, /уже идёт/)
+  assert.equal(calls, 1)
+
+  release()
+  const firstAnswer = await first
+  assert.equal(firstAnswer.accepted, true)
+
+  // The lock is released once the call finishes, so a later send is allowed.
+  const third = await host.handlers.get('agent.send')({ terminalId: 'term-1', text: 'c' })
+  assert.equal(third.accepted, true)
+})
+
 
 test('agent.send refuses a missing terminal or empty text without calling the host', async () => {
   const host = fakeOrca({ 'terminal.sendText': { accepted: true } })
@@ -243,4 +298,5 @@ test('a terminal that refuses, or a host that throws, comes back as a refusal', 
   const failed = await broken.handlers.get('agent.send')({ terminalId: 'term-1', text: 'x' })
   assert.equal(failed.accepted, false)
   assert.equal(failed.reason, 'terminal not found')
+  assert.equal(failed.unknown, true)
 })

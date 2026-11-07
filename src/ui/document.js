@@ -8,6 +8,7 @@
 
 import { readZip, writeZip } from '../write/zip.js'
 import { applyEdits } from '../write/xlsx-writer.js'
+import { applyStructural } from '../write/structural.js'
 import { loadWorkbook } from '../model/workbook.js'
 import { createEditLog } from '../edit/edits.js'
 
@@ -72,7 +73,7 @@ function cachedResult(value) {
 
 /** Edit-log operation to the writer's cell edit: `before` is not the writer's business. */
 function toCellEdit(op) {
-  const value = op.after
+  const value = op.after ?? { kind: 'blank' }
   if (value.formula) {
     return {
       sheet: op.sheet,
@@ -102,6 +103,45 @@ function hasUnsaved() {
   return log.opsSince(saveMark).length > 0
 }
 
+// Apply cells in batches separated by structural snapshots. A snapshot represents
+// the entire package at that point in history, including cross-sheet references.
+function materialize(entries, ops) {
+  let current = entries
+  let cells = []
+  function flush() {
+    if (!cells.length) return null
+    const result = applyEdits(current, cells.map(toCellEdit))
+    cells = []
+    if (result.status !== 'ok') return result
+    current = result.entries
+    return null
+  }
+  for (const op of ops) {
+    if (op.type === 'cell') {
+      cells.push(op)
+      continue
+    }
+    const failure = flush()
+    if (failure) return failure
+    current = op.type === 'restore' ? op.entries : op.afterEntries
+  }
+  const failure = flush()
+  return failure ?? { status: 'ok', entries: current }
+}
+
+function currentEntries() {
+  if (!pkg) return { status: 'refused', reason: 'this file could not be read, so changes cannot be written back' }
+  if (blocked.size) return { status: 'refused', reason: 'a previous edit was refused; reload the document before changing its structure' }
+  return materialize(pkg, saveMark ? log.opsSince(saveMark) : log.ops())
+}
+
+/** Bytes of the currently staged workbook, for rebuilding the view after structural history. */
+export function currentDocumentBytes() {
+  const result = currentEntries()
+  if (result.status !== 'ok') throw new Error(result.reason)
+  return writeZip(result.entries)
+}
+
 function decode(content) {
   if (content.kind !== 'bytes') throw new TypeError('a workbook editor needs a bytes document')
   const bytes = new Uint8Array(content.bytes)
@@ -110,8 +150,8 @@ function decode(content) {
     // The host accepted the edit this tab sent; the file on disk is exactly these bytes now.
     pkg = pending.entries
     acceptedBytes = bytes
+    saveMark = pending.mark
     pending = null
-    saveMark = log.markSaved()
     onAccepted()
     return { bytes }
   }
@@ -133,6 +173,7 @@ function decode(content) {
 
 function encode() {
   if (!acceptedBytes) throw new Error('the workbook has not been read yet')
+  if (pending) throw new Error('a workbook save is already awaiting host acceptance')
   if (!pkg) {
     // A file this editor cannot take apart must never look as if it were saved.
     const reason = 'this file could not be read, so changes cannot be written back'
@@ -143,13 +184,23 @@ function encode() {
   if (!ops.length) {
     // Nothing to write. This is still an answer to our own change(), so the host's echo must be
     // recognised as ours: otherwise decode treats it as an outside write and wipes the undo history.
-    pending = { bytes: acceptedBytes, entries: pkg }
+    pending = { bytes: acceptedBytes, entries: pkg, mark: log.markSaved() }
     return { kind: 'bytes', bytes: slice(acceptedBytes) }
   }
 
-  const usable = ops.filter((op) => !blocked.has(cellKey(op)))
-  const result = usable.length ? applyEdits(pkg, usable.map(toCellEdit)) : { status: 'ok', entries: pkg }
+  const structural = ops.some((op) => op.type !== 'cell')
+  const usable = ops.filter((op) => op.type !== 'cell' || !blocked.has(cellKey(op)))
+  if (structural && blocked.size) {
+    const reason = 'a refused cell edit prevents saving the structural transaction'
+    onRefused(reason)
+    throw new Error(reason)
+  }
+  const result = materialize(pkg, usable)
   if (result.status !== 'ok') {
+    if (structural) {
+      onRefused(result.reason)
+      throw new Error(result.reason)
+    }
     // Find which edits the writer will not take, remember them, and save the rest. A single cell
     // inside a merged range must not cost the person every other edit in the tab.
     const offender = firstRefused(pkg, usable)
@@ -163,14 +214,14 @@ function encode() {
         throw new Error(retry.reason)
       }
       const bytes = writeZip(retry.entries)
-      pending = { bytes, entries: retry.entries }
+      pending = { bytes, entries: retry.entries, mark: log.markSaved() }
       return { kind: 'bytes', bytes: slice(bytes) }
     }
     onRefused(result.reason)
     throw new Error(result.reason)
   }
   const bytes = writeZip(result.entries)
-  pending = { bytes, entries: result.entries }
+  pending = { bytes, entries: result.entries, mark: log.markSaved() }
   return { kind: 'bytes', bytes: slice(bytes) }
 }
 
@@ -214,6 +265,26 @@ export function commitEdit(doc, op) {
   return { ok: true, op: applied }
 }
 
+/** Preflight the complete staged package before recording a structural change. */
+export function commitStructural(doc, operation) {
+  if (doc.readOnly) return { ok: false, reason: 'the document is read-only' }
+  if (pending) return { ok: false, reason: 'a workbook save is awaiting host acceptance' }
+  const before = currentEntries()
+  if (before.status !== 'ok') return { ok: false, reason: before.reason }
+  const result = applyStructural(before.entries, operation)
+  if (result.status !== 'ok') return { ok: false, reason: result.reason }
+  const state = log.checkpoint()
+  try {
+    const op = log.apply({ ...operation, type: 'structural', beforeEntries: before.entries, afterEntries: result.entries })
+    const bytes = writeZip(result.entries)
+    doc.change({})
+    return { ok: true, op, bytes }
+  } catch (error) {
+    log.restore(state)
+    return { ok: false, reason: error.message }
+  }
+}
+
 /** Marks a cell the writer refused, so later saves skip it instead of failing whole. */
 const blocked = new Set()
 export function isBlocked() {
@@ -221,18 +292,31 @@ export function isBlocked() {
 }
 const cellKey = (op) => `${op.sheet}\u0000${op.ref}`
 
+function moveHistory(doc, direction) {
+  const next = direction === 'undo' ? log.peekUndo() : log.peekRedo()
+  if (!next) return null
+  if (doc.readOnly || (pending && next.type === 'structural')) {
+    onRefused(doc.readOnly ? 'the document is read-only' : 'a workbook save is awaiting host acceptance')
+    return null
+  }
+  const state = log.checkpoint()
+  try {
+    const op = log[direction]()
+    doc.change({})
+    return op
+  } catch (error) {
+    log.restore(state)
+    onRefused(error.message)
+    return null
+  }
+}
+
 export function undo(doc) {
-  const op = log.undo()
-  if (!op) return null
-  doc.change({})
-  return op
+  return moveHistory(doc, 'undo')
 }
 
 export function redo(doc) {
-  const op = log.redo()
-  if (!op) return null
-  doc.change({})
-  return op
+  return moveHistory(doc, 'redo')
 }
 
 export function editState() {

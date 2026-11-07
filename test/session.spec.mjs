@@ -4,6 +4,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 
 import { readZip, writeZip } from '../src/write/zip.js'
+import ExcelJS from 'exceljs'
 import { fixtureBytes } from './helpers/fixtures.mjs'
 
 const copy = (bytes) => Uint8Array.from(bytes)
@@ -35,7 +36,7 @@ function withSheet(bytes, part, transform) {
  * outside write that can land at any time.
  */
 function createHost(bytes) {
-  const state = { version: 1, bytes: copy(bytes), readOnly: false, discarded: 0 }
+  const state = { version: 1, bytes: copy(bytes), readOnly: false, discarded: 0, failChange: false, revision: 0 }
   let handlers = null
   let timer = null
   let inFlight = null
@@ -52,11 +53,12 @@ function createHost(bytes) {
   })
 
   async function send() {
+    const revision = state.revision
     const encoded = handlers.encode()
     await Promise.resolve()
     state.bytes = new Uint8Array(encoded.bytes)
     state.version += 1
-    dirty = false
+    dirty = state.revision !== revision
     handlers.decode(encoded)
   }
 
@@ -73,7 +75,9 @@ function createHost(bytes) {
             return state.readOnly
           },
           change() {
+            if (state.failChange) throw new Error('host rejected change')
             if (state.readOnly) return
+            state.revision++
             clearTimeout(timer)
             timer = setTimeout(() => {
               timer = null
@@ -100,6 +104,8 @@ function createHost(bytes) {
 
   return {
     api,
+    setReadOnly(value) { state.readOnly = value },
+    setFailChange(value) { state.failChange = value },
     bytes: () => copy(state.bytes),
     /** An outside writer replaced the file, and Orca handed the tab the new document. */
     outsideWrite(next) {
@@ -306,6 +312,113 @@ test('a workbook the reader cannot take apart never reports a successful save', 
     await assert.rejects(() => doc.flush())
     assert.equal(refusals.length > 0, true)
     assert.equal(session.editState().dirty, true, 'an unwritable file must not look saved')
+  } finally {
+    delete globalThis.orca
+  }
+})
+
+test('a deleted row and its metadata survive undo and redo across accepted saves', async () => {
+  const book = new ExcelJS.Workbook()
+  const sheet = book.addWorksheet('Data')
+  sheet.getCell('A1').value = 1
+  sheet.getCell('A2').value = 'removed'
+  sheet.getCell('A2').font = { bold: true }
+  sheet.getRow(2).height = 27
+  sheet.getCell('A3').value = 3
+  const host = createHost(new Uint8Array(await book.xlsx.writeBuffer()))
+  globalThis.orca = host.api
+  try {
+    const session = await import(`../src/ui/document.js?case=${Math.random()}`)
+    const doc = await session.openDocument()
+    session.commitEdit(doc, { type: 'cell', sheet: 'Data', ref: 'A1', before: number(1), after: number(2) })
+    const result = session.commitStructural(doc, { sheet: 'Data', axis: 'row', action: 'delete', index: 2, count: 1 })
+    assert.equal(result.ok, true, result.reason)
+    session.commitEdit(doc, { type: 'cell', sheet: 'Data', ref: 'A2', before: number(3), after: number(4) })
+    await doc.flush()
+    assert.match(sheetText(host.bytes()), /<c r="A2"[^>]*><v>4<\/v>/)
+    session.undo(doc)
+    await doc.flush()
+    session.undo(doc)
+    await doc.flush()
+    const restored = new ExcelJS.Workbook()
+    await restored.xlsx.load(host.bytes())
+    assert.equal(restored.getWorksheet('Data').getCell('A2').value, 'removed')
+    assert.equal(restored.getWorksheet('Data').getCell('A2').font.bold, true)
+    assert.equal(restored.getWorksheet('Data').getRow(2).height, 27)
+    assert.equal(restored.getWorksheet('Data').getCell('A1').value, 2)
+    session.redo(doc)
+    await doc.flush()
+    session.redo(doc)
+    await doc.flush()
+    assert.match(sheetText(host.bytes()), /<c r="A2"[^>]*><v>4<\/v>/)
+  } finally {
+    delete globalThis.orca
+  }
+})
+
+test('a structural refusal leaves the document and history untouched', async () => {
+  await withHost('rich.xlsx', async (session, host) => {
+    const doc = await session.openDocument()
+    const before = host.bytes()
+    const state = session.editState()
+    const result = session.commitStructural(doc, { sheet: 'missing', axis: 'row', action: 'delete', index: 1, count: 1 })
+    assert.equal(result.ok, false)
+    assert.deepEqual(session.editState(), state)
+    await doc.flush()
+    assert.deepEqual(host.bytes(), before)
+  })
+})
+
+test('a host rejection and read-only state cannot create a structural history entry', async () => {
+  const book = new ExcelJS.Workbook()
+  book.addWorksheet('Data').getCell('A1').value = 1
+  const host = createHost(new Uint8Array(await book.xlsx.writeBuffer()))
+  globalThis.orca = host.api
+  try {
+    const session = await import(`../src/ui/document.js?case=${Math.random()}`)
+    const doc = await session.openDocument()
+    const original = host.bytes()
+    const op = { sheet: 'Data', axis: 'row', action: 'delete', index: 1, count: 1 }
+    host.setReadOnly(true)
+    assert.equal(session.commitStructural(doc, op).ok, false)
+    host.setReadOnly(false)
+    host.setFailChange(true)
+    assert.equal(session.commitStructural(doc, op).ok, false)
+    assert.deepEqual(session.editState(), { canUndo: false, canRedo: false, dirty: false })
+    assert.deepEqual(host.bytes(), original)
+  } finally {
+    delete globalThis.orca
+  }
+})
+
+test('edits made during an in-flight save are not marked accepted with its earlier bytes', async () => {
+  await withHost('rich.xlsx', async (session, host) => {
+    const doc = await session.openDocument()
+    session.commitEdit(doc, { type: 'cell', sheet: 'Summary', ref: 'B2', before: number(282349), after: number(1) })
+    const firstSave = doc.flush()
+    session.commitEdit(doc, { type: 'cell', sheet: 'Summary', ref: 'B3', before: number(271219), after: number(2) })
+    await firstSave
+    assert.equal(session.editState().dirty, true)
+    await doc.flush()
+    assert.match(sheetText(host.bytes()), /<c r="B3"[^>]*><v>2<\/v>/)
+  })
+})
+
+test('outside replacement discards a staged structural transaction and its snapshots', async () => {
+  const book = new ExcelJS.Workbook()
+  book.addWorksheet('Data').getCell('A1').value = 1
+  const host = createHost(new Uint8Array(await book.xlsx.writeBuffer()))
+  globalThis.orca = host.api
+  try {
+    const session = await import(`../src/ui/document.js?case=${Math.random()}`)
+    const doc = await session.openDocument()
+    const original = host.bytes()
+    assert.equal(session.commitStructural(doc, { sheet: 'Data', axis: 'column', action: 'delete', index: 1, count: 1 }).ok, true)
+    host.outsideWrite(original)
+    assert.equal(session.editState().canUndo, false)
+    assert.equal(session.undo(doc), null)
+    await doc.flush()
+    assert.deepEqual(host.bytes(), original)
   } finally {
     delete globalThis.orca
   }
